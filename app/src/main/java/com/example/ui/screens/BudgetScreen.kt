@@ -45,11 +45,11 @@ fun BudgetScreen(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = SummaryCardBlue)
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -57,15 +57,15 @@ fun BudgetScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "মোট বাজেট",
+                            text = "Total Budget",
                             color = Color.White.copy(alpha = 0.9f),
-                            fontSize = 15.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Medium
                         )
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(Color.White.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -73,21 +73,21 @@ fun BudgetScreen(
                                 imageVector = Icons.Default.CreditCard,
                                 contentDescription = "Budget",
                                 tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
                     Text(
                         text = "৳ ${formatter.format(totalBudget.toInt())}",
                         color = Color.White,
-                        fontSize = 28.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -95,61 +95,59 @@ fun BudgetScreen(
                     ) {
                         Column {
                             Text(
-                                text = "মোট খরচ",
+                                text = "Total Expense",
                                 color = Color.White.copy(alpha = 0.8f),
-                                fontSize = 12.sp
+                                fontSize = 11.sp
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "৳ ${formatter.format(totalExpense.toInt())}",
                                 color = Color.White,
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "অবশিষ্ট ব্যালেন্স",
+                                text = "Remaining Balance",
                                 color = Color.White.copy(alpha = 0.8f),
-                                fontSize = 12.sp
+                                fontSize = 11.sp
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "৳ ${formatter.format(remainingBalance.toInt())}",
                                 color = Color.White,
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    val usedPercent = ((totalExpense / totalBudget) * 100).toInt()
+                    val usedPercent = if (totalBudget > 0) ((totalExpense / totalBudget) * 100).toInt() else 0
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "ব্যবহৃত হয়েছে",
+                            text = "Used Budget",
                             color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 12.sp
+                            fontSize = 11.sp
                         )
                         Text(
                             text = "$usedPercent%",
                             color = Color.White,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     LinearProgressIndicator(
-                        progress = { (totalExpense / totalBudget).toFloat() },
+                        progress = { (totalExpense / totalBudget).toFloat().coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(6.dp)
+                            .height(5.dp)
                             .clip(RoundedCornerShape(3.dp)),
                         color = Color(0xFF38BDF8),
                         trackColor = Color.White.copy(alpha = 0.3f)
@@ -161,7 +159,7 @@ fun BudgetScreen(
         // Section header
         item {
             Text(
-                text = "সাম্প্রতিক খরচ",
+                text = "Recent Expenses",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary,

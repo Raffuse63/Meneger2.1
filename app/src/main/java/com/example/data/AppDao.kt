@@ -34,6 +34,24 @@ interface PeopleDueDao {
 }
 
 @Dao
+interface PersonTransactionDao {
+    @Query("SELECT * FROM person_transactions ORDER BY id DESC")
+    fun getAllTransactions(): Flow<List<PersonTransactionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransaction(transaction: PersonTransactionEntity): Long
+
+    @Delete
+    suspend fun deleteTransaction(transaction: PersonTransactionEntity)
+
+    @Query("SELECT * FROM transaction_payments ORDER BY id ASC")
+    fun getAllPayments(): Flow<List<TransactionPaymentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPayment(payment: TransactionPaymentEntity): Long
+}
+
+@Dao
 interface TrackerDao {
     @Query("SELECT * FROM tracker_records ORDER BY id DESC")
     fun getAllRecords(): Flow<List<TrackerRecordEntity>>

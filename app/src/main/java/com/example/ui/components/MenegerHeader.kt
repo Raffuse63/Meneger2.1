@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,13 +16,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.ui.theme.HeaderBlue
+import com.google.firebase.auth.FirebaseUser
 
 @Composable
 fun MenegerHeader(
+    currentUser: FirebaseUser? = null,
     modifier: Modifier = Modifier,
     onMenuClick: () -> Unit = {}
 ) {
@@ -36,21 +41,34 @@ fun MenegerHeader(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Avatar H
+            // Avatar
+            val photoUrl = currentUser?.photoUrl
+            val initial = currentUser?.displayName?.firstOrNull()?.uppercase() ?: "H"
+
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.2f))
-                    .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape),
+                    .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)
+                    .clickable { onMenuClick() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "H",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (photoUrl != null) {
+                    AsyncImage(
+                        model = photoUrl,
+                        contentDescription = "User Photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        text = initial,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -62,10 +80,11 @@ fun MenegerHeader(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Meneger2.0",
+                        text = currentUser?.displayName ?: "Meneger2.0",
                         color = Color.White,
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
@@ -74,10 +93,11 @@ fun MenegerHeader(
                     )
                 }
                 Text(
-                    text = "All-in-One Personal Dashboard",
+                    text = currentUser?.email ?: "All-in-One Personal Dashboard",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Normal
+                    fontWeight = FontWeight.Normal,
+                    maxLines = 1
                 )
             }
 
