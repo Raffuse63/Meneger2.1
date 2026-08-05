@@ -43,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "meneger_database"
                 )
                 .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigrationOnDowngrade()
                 .addCallback(DatabaseCallback(scope))
                 .build()
                 INSTANCE = instance

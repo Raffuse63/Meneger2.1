@@ -247,6 +247,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun swapBazarItems(item1: BazarItemEntity, item2: BazarItemEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedItem1 = item1.copy(
+                title = item2.title,
+                targetPrice = item2.targetPrice,
+                unitQuantity = item2.unitQuantity,
+                actualSpent = item2.actualSpent
+            )
+            val updatedItem2 = item2.copy(
+                title = item1.title,
+                targetPrice = item1.targetPrice,
+                unitQuantity = item1.unitQuantity,
+                actualSpent = item1.actualSpent
+            )
+            bazarDao.updateBazarItem(updatedItem1)
+            bazarDao.updateBazarItem(updatedItem2)
+        }
+    }
+
     fun deleteBazarItem(item: BazarItemEntity) {
         viewModelScope.launch(Dispatchers.IO) {
             bazarDao.deleteBazarItem(item)

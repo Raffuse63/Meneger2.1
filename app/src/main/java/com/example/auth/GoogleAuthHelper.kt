@@ -5,6 +5,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -12,10 +13,29 @@ import kotlinx.coroutines.tasks.await
 
 class GoogleAuthHelper {
 
-    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    private fun getAuthInstance(context: Context? = null): FirebaseAuth? {
+        return try {
+            FirebaseAuth.getInstance()
+        } catch (e: Exception) {
+            if (context != null) {
+                try {
+                    FirebaseApp.initializeApp(context)
+                    FirebaseAuth.getInstance()
+                } catch (e2: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+        }
+    }
 
     val currentUser: FirebaseUser?
-        get() = auth.currentUser
+        get() = try {
+            getAuthInstance()?.currentUser
+        } catch (e: Exception) {
+            null
+        }
 
     companion object {
         const val WEB_CLIENT_ID = "989102272624-n5gu65hmac1t1r9fh4f9bd4cubp7uuvp.apps.googleusercontent.com"
@@ -23,6 +43,9 @@ class GoogleAuthHelper {
 
     suspend fun signInWithGoogle(context: Context): Result<FirebaseUser> {
         return try {
+            val auth = getAuthInstance(context)
+                ?: return Result.failure(Exception("Firebase is not initialized"))
+
             val credentialManager = CredentialManager.create(context)
 
             val googleIdOption = GetGoogleIdOption.Builder()
@@ -63,6 +86,10 @@ class GoogleAuthHelper {
     }
 
     fun signOut() {
-        auth.signOut()
+        try {
+            getAuthInstance()?.signOut()
+        } catch (e: Exception) {
+            // Safe ignore
+        }
     }
 }

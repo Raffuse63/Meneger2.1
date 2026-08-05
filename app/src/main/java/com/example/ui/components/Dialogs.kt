@@ -433,6 +433,7 @@ fun ConfirmDeletePersonDialog(
 
 @Composable
 fun AddTrackerRecordDialog(
+    existingCategories: List<String> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (
         title: String,
@@ -451,22 +452,46 @@ fun AddTrackerRecordDialog(
 
     var title by remember { mutableStateOf("") }
     var amountText by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("Groceries") }
+    var category by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var isExpense by remember { mutableStateOf(true) }
 
     var year by remember { mutableIntStateOf(calendar.get(java.util.Calendar.YEAR)) }
     var monthIndex by remember { mutableIntStateOf(calendar.get(java.util.Calendar.MONTH)) }
     var dayOfMonth by remember { mutableIntStateOf(calendar.get(java.util.Calendar.DAY_OF_MONTH)) }
+    var hour by remember { mutableIntStateOf(calendar.get(java.util.Calendar.HOUR_OF_DAY)) }
+    var minute by remember { mutableIntStateOf(calendar.get(java.util.Calendar.MINUTE)) }
 
     val monthsList = listOf(
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
     )
 
+    val sdf = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.US)
     var dateDisplayString by remember {
-        val sdf = java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.US)
         mutableStateOf(sdf.format(calendar.time))
+    }
+
+    val timePickerDialog = remember {
+        android.app.TimePickerDialog(
+            context,
+            { _, pickedHour, pickedMinute ->
+                hour = pickedHour
+                minute = pickedMinute
+
+                val cal = java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.YEAR, year)
+                    set(java.util.Calendar.MONTH, monthIndex)
+                    set(java.util.Calendar.DAY_OF_MONTH, dayOfMonth)
+                    set(java.util.Calendar.HOUR_OF_DAY, pickedHour)
+                    set(java.util.Calendar.MINUTE, pickedMinute)
+                }
+                dateDisplayString = sdf.format(cal.time)
+            },
+            hour,
+            minute,
+            false
+        )
     }
 
     val datePickerDialog = remember {
@@ -477,18 +502,20 @@ fun AddTrackerRecordDialog(
                 monthIndex = pickedMonth
                 dayOfMonth = pickedDay
 
-                val cal = java.util.Calendar.getInstance()
-                cal.set(pickedYear, pickedMonth, pickedDay)
-                val sdf = java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.US)
+                val cal = java.util.Calendar.getInstance().apply {
+                    set(pickedYear, pickedMonth, pickedDay)
+                    set(java.util.Calendar.HOUR_OF_DAY, hour)
+                    set(java.util.Calendar.MINUTE, minute)
+                }
                 dateDisplayString = sdf.format(cal.time)
+
+                timePickerDialog.show()
             },
             year,
             monthIndex,
             dayOfMonth
         )
     }
-
-    val sampleCategories = listOf("Groceries", "Personal", "House Rent", "Food", "Transport", "Others")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -562,7 +589,7 @@ fun AddTrackerRecordDialog(
                     OutlinedButton(
                         onClick = { datePickerDialog.show() },
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.2f)
                             .height(56.dp)
                             .padding(top = 8.dp),
                         shape = RoundedCornerShape(12.dp),
@@ -570,30 +597,32 @@ fun AddTrackerRecordDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DateRange,
-                            contentDescription = "Pick Date",
+                            contentDescription = "Pick Date & Time",
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = dateDisplayString,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 }
 
-                // Quick category suggestions
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    sampleCategories.forEach { cat ->
-                        SuggestionChip(
-                            onClick = { category = cat },
-                            label = { Text(cat, fontSize = 11.sp) }
-                        )
+                // Quick category suggestions - ONLY showing previously added categories
+                if (existingCategories.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        existingCategories.forEach { cat ->
+                            SuggestionChip(
+                                onClick = { category = cat },
+                                label = { Text(cat, fontSize = 11.sp) }
+                            )
+                        }
                     }
                 }
 
@@ -618,7 +647,7 @@ fun AddTrackerRecordDialog(
                             title.trim(),
                             amount,
                             isExpense,
-                            category.ifBlank { "Others" },
+                            category.trim().ifBlank { "Uncategorized" },
                             description.trim(),
                             year,
                             monthName,
@@ -642,17 +671,86 @@ fun AddTrackerRecordDialog(
 @Composable
 fun EditTrackerRecordDialog(
     record: com.example.data.TrackerRecordEntity,
+    existingCategories: List<String> = emptyList(),
     onDismiss: () -> Unit,
     onConfirm: (updatedRecord: com.example.data.TrackerRecordEntity) -> Unit,
     onDelete: (record: com.example.data.TrackerRecordEntity) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val calendar = remember { java.util.Calendar.getInstance() }
+
     var title by remember { mutableStateOf(record.title) }
     var amountText by remember { mutableStateOf(record.amount.toInt().toString()) }
     var category by remember { mutableStateOf(record.category) }
     var description by remember { mutableStateOf(record.description) }
     var isExpense by remember { mutableStateOf(record.isExpense) }
+    var dateDisplayString by remember { mutableStateOf(record.dateString) }
 
-    val sampleCategories = listOf("Groceries", "Personal", "House Rent", "Food", "Transport", "Others")
+    var year by remember { mutableIntStateOf(record.year) }
+    var monthName by remember { mutableStateOf(record.month) }
+    var dayOfMonth by remember { mutableStateOf(record.day) }
+
+    val monthsList = listOf(
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    )
+    val curMonthIdx = monthsList.indexOf(record.month).let { if (it >= 0) it else 7 }
+
+    var selectedYear by remember { mutableIntStateOf(record.year) }
+    var selectedMonthIdx by remember { mutableIntStateOf(curMonthIdx) }
+    var selectedDay by remember { mutableIntStateOf(record.day.toIntOrNull() ?: 1) }
+    var selectedHour by remember { mutableIntStateOf(calendar.get(java.util.Calendar.HOUR_OF_DAY)) }
+    var selectedMinute by remember { mutableIntStateOf(calendar.get(java.util.Calendar.MINUTE)) }
+
+    val sdf = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.US)
+
+    val timePickerDialog = remember {
+        android.app.TimePickerDialog(
+            context,
+            { _, pickedHour, pickedMinute ->
+                selectedHour = pickedHour
+                selectedMinute = pickedMinute
+
+                val cal = java.util.Calendar.getInstance().apply {
+                    set(java.util.Calendar.YEAR, selectedYear)
+                    set(java.util.Calendar.MONTH, selectedMonthIdx)
+                    set(java.util.Calendar.DAY_OF_MONTH, selectedDay)
+                    set(java.util.Calendar.HOUR_OF_DAY, pickedHour)
+                    set(java.util.Calendar.MINUTE, pickedMinute)
+                }
+                dateDisplayString = sdf.format(cal.time)
+            },
+            selectedHour,
+            selectedMinute,
+            false
+        )
+    }
+
+    val datePickerDialog = remember {
+        android.app.DatePickerDialog(
+            context,
+            { _, pickedYear, pickedMonth, pickedDay ->
+                selectedYear = pickedYear
+                selectedMonthIdx = pickedMonth
+                selectedDay = pickedDay
+                year = pickedYear
+                monthName = monthsList.getOrElse(pickedMonth) { "August" }
+                dayOfMonth = pickedDay.toString()
+
+                val cal = java.util.Calendar.getInstance().apply {
+                    set(pickedYear, pickedMonth, pickedDay)
+                    set(java.util.Calendar.HOUR_OF_DAY, selectedHour)
+                    set(java.util.Calendar.MINUTE, selectedMinute)
+                }
+                dateDisplayString = sdf.format(cal.time)
+
+                timePickerDialog.show()
+            },
+            selectedYear,
+            selectedMonthIdx,
+            selectedDay
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -723,10 +821,10 @@ fun EditTrackerRecordDialog(
                     )
 
                     OutlinedButton(
-                        onClick = { },
-                        enabled = false,
+                        onClick = { datePickerDialog.show() },
+                        enabled = true,
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.2f)
                             .height(56.dp)
                             .padding(top = 8.dp),
                         shape = RoundedCornerShape(12.dp),
@@ -734,30 +832,32 @@ fun EditTrackerRecordDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DateRange,
-                            contentDescription = "Date",
+                            contentDescription = "Pick Date & Time",
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = record.dateString,
-                            fontSize = 11.sp,
+                            text = dateDisplayString,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 }
 
-                // Quick category suggestions
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    sampleCategories.forEach { cat ->
-                        SuggestionChip(
-                            onClick = { category = cat },
-                            label = { Text(cat, fontSize = 11.sp) }
-                        )
+                // Quick category suggestions - ONLY showing previously added categories
+                if (existingCategories.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        existingCategories.forEach { cat ->
+                            SuggestionChip(
+                                onClick = { category = cat },
+                                label = { Text(cat, fontSize = 11.sp) }
+                            )
+                        }
                     }
                 }
 
@@ -792,8 +892,12 @@ fun EditTrackerRecordDialog(
                                     title = title.trim(),
                                     amount = amount,
                                     isExpense = isExpense,
-                                    category = category.ifBlank { "Others" },
-                                    description = description.trim()
+                                    category = category.trim().ifBlank { "Uncategorized" },
+                                    description = description.trim(),
+                                    year = year,
+                                    month = monthName,
+                                    day = dayOfMonth,
+                                    dateString = dateDisplayString
                                 )
                             )
                             onDismiss()

@@ -155,17 +155,6 @@ fun TrackerScreen(
     val totalExpense = remember(filteredRecords) {
         filteredRecords.filter { it.isExpense }.sumOf { it.amount }
     }
-    val netBalance = totalIncome - totalExpense
-
-    val expenseRatio = remember(totalIncome, totalExpense) {
-        if (totalIncome > 0) {
-            ((totalExpense / totalIncome) * 100).toInt().coerceAtMost(100)
-        } else if (totalExpense > 0) {
-            100
-        } else {
-            0
-        }
-    }
 
     val prevMonthBalance = remember(records, selectedYear, selectedMonth) {
         if (selectedMonth == "All Months" && selectedYear == "All Years") {
@@ -193,6 +182,18 @@ fun TrackerScreen(
             val inc = priorRecords.filter { !it.isExpense }.sumOf { it.amount }
             val exp = priorRecords.filter { it.isExpense }.sumOf { it.amount }
             inc - exp
+        }
+    }
+
+    val netBalance = totalIncome - totalExpense + prevMonthBalance
+
+    val expenseRatio = remember(totalIncome, totalExpense) {
+        if (totalIncome > 0) {
+            ((totalExpense / totalIncome) * 100).toInt().coerceAtMost(100)
+        } else if (totalExpense > 0) {
+            100
+        } else {
+            0
         }
     }
 
@@ -241,115 +242,125 @@ fun TrackerScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = 80.dp)
         ) {
-            // Top Summary Card (Matching Account, Bazar, and Budget screens)
+            // Top Summary Card (Compact height matching reference)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = SummaryCardBlue)
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0063B6))
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)
+                        modifier = Modifier.padding(14.dp)
                     ) {
+                        // Top Row: Balance Label & Balance Value & Top Right Icon
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Text(
-                                text = "Net Balance",
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                            Column {
+                                Text(
+                                    text = "মাসিক ব্যালেন্স (Balance)",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = if (netBalance < 0) "-৳ ${formatter.format(-netBalance.toInt())}" else "৳ ${formatter.format(netBalance.toInt())}",
+                                    color = Color.White,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
                             Box(
                                 modifier = Modifier
-                                    .size(30.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.2f)),
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(alpha = 0.18f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.AccountBalanceWallet,
-                                    contentDescription = "Balance",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "💸",
+                                    fontSize = 18.sp
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                        Text(
-                            text = if (netBalance < 0) "-৳ ${formatter.format(-netBalance.toInt())}" else "৳ ${formatter.format(netBalance.toInt())}",
-                            color = Color.White,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
+                        // Middle Row: Total Income & Total Expense
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
                                 Text(
-                                    text = "Total Income",
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    fontSize = 11.sp
+                                    text = "মোট আয় (Income)",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
+                                Spacer(modifier = Modifier.height(1.dp))
                                 Text(
                                     text = "৳ ${formatter.format(totalIncome.toInt())}",
-                                    color = Color.White,
-                                    fontSize = 14.sp,
+                                    color = Color(0xFF71EFA3),
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
 
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = "Total Expense",
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    fontSize = 11.sp
+                                    text = "মোট খরচ (Expense)",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
+                                Spacer(modifier = Modifier.height(1.dp))
                                 Text(
                                     text = "৳ ${formatter.format(totalExpense.toInt())}",
-                                    color = Color.White,
-                                    fontSize = 14.sp,
+                                    color = Color(0xFFFF9393),
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
+                        // Bottom Row: Pre Month & Expense Percentage
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val prevMonthStr = if (prevMonthBalance < 0) "-৳ ${formatter.format(-prevMonthBalance.toInt())}" else "৳ ${formatter.format(prevMonthBalance.toInt())}"
                             Text(
-                                text = "Pre Month",
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 11.sp
-                            )
-                            Text(
-                                text = if (prevMonthBalance < 0) "-৳ ${formatter.format(-prevMonthBalance.toInt())}" else "৳ ${formatter.format(prevMonthBalance.toInt())}",
+                                text = "পূর্বের মাস: $prevMonthStr",
                                 color = Color.White,
                                 fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "$expenseRatio%",
+                                color = Color.White,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Spacer(modifier = Modifier.height(3.dp))
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
                         LinearProgressIndicator(
                             progress = { (expenseRatio / 100f).coerceIn(0f, 1f) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(5.dp)
                                 .clip(CircleShape),
-                            color = Color.White,
-                            trackColor = Color.White.copy(alpha = 0.3f)
+                            color = Color(0xFFFF9393),
+                            trackColor = Color.White.copy(alpha = 0.25f)
                         )
                     }
                 }

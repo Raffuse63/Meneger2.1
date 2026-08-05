@@ -32,6 +32,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try {
+            com.google.firebase.FirebaseApp.initializeApp(this)
+        } catch (e: Exception) {
+            // Firebase fallback handling
+        }
         setContent {
             MenegerTheme {
                 MainAppScreen(viewModel = viewModel)
@@ -135,7 +140,13 @@ fun MainAppScreen(
                 AppTab.BAZAR -> {
                     BazarScreen(
                         bazarItems = bazarItems,
-                        onRecordSpent = { selectedBazarItemForSpent = it }
+                        onRecordSpent = { selectedBazarItemForSpent = it },
+                        onUpdateSpent = { item, newSpent ->
+                            viewModel.updateBazarSpent(item, newSpent)
+                        },
+                        onSwapItems = { item1, item2 ->
+                            viewModel.swapBazarItems(item1, item2)
+                        }
                     )
                 }
                 AppTab.BUDGET -> {
@@ -168,7 +179,11 @@ fun MainAppScreen(
                 )
             }
             AppTab.TRACKER -> {
+                val existingCategories = remember(trackerRecords) {
+                    trackerRecords.map { it.category }.filter { it.isNotBlank() && it != "Uncategorized" }.distinct()
+                }
                 AddTrackerRecordDialog(
+                    existingCategories = existingCategories,
                     onDismiss = { showAddDialog = false },
                     onConfirm = { title, amount, isExpense, category, description, year, month, day, dateString ->
                         viewModel.addTrackerRecord(
@@ -245,8 +260,12 @@ fun MainAppScreen(
     }
 
     editingTrackerRecord?.let { record ->
+        val existingCategories = remember(trackerRecords) {
+            trackerRecords.map { it.category }.filter { it.isNotBlank() && it != "Uncategorized" }.distinct()
+        }
         EditTrackerRecordDialog(
             record = record,
+            existingCategories = existingCategories,
             onDismiss = { editingTrackerRecord = null },
             onConfirm = { updated ->
                 viewModel.updateTrackerRecord(updated)
