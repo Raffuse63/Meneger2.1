@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -434,6 +435,10 @@ fun ConfirmDeletePersonDialog(
 @Composable
 fun AddTrackerRecordDialog(
     existingCategories: List<String> = emptyList(),
+    initialTitle: String = "",
+    initialAmountText: String = "",
+    initialCategory: String = "",
+    initialDescription: String = "",
     onDismiss: () -> Unit,
     onConfirm: (
         title: String,
@@ -450,10 +455,10 @@ fun AddTrackerRecordDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     val calendar = remember { java.util.Calendar.getInstance() }
 
-    var title by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf(initialTitle) }
+    var amountText by remember { mutableStateOf(initialAmountText) }
+    var category by remember { mutableStateOf(initialCategory) }
+    var description by remember { mutableStateOf(initialDescription) }
     var isExpense by remember { mutableStateOf(true) }
 
     var year by remember { mutableIntStateOf(calendar.get(java.util.Calendar.YEAR)) }
@@ -922,32 +927,134 @@ fun AddBazarItemDialog(
     onConfirm: (title: String, targetPrice: Double, unitQuantity: String) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
+    var quantityText by remember { mutableStateOf("") }
+    var selectedUnit by remember { mutableStateOf("কেজি") }
+    var unitDropdownExpanded by remember { mutableStateOf(false) }
     var targetText by remember { mutableStateOf("") }
-    var unitQuantity by remember { mutableStateOf("1 kg") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Bazar Item", fontSize = 18.sp) },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color(0xFFF8FAFC),
+        title = {
+            Text(
+                text = "নতুন পণ্য যুক্ত করুন",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF15803D)
+            )
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Item Description / Title
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Item Name (e.g. Cucumber)") },
-                    modifier = Modifier.fillMaxWidth()
+                    placeholder = { Text("পণ্যের বিবরণ (যেমন: চাল, ডাল)", color = Color(0xFF94A3B8)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF64748B),
+                        unfocusedBorderColor = Color(0xFF94A3B8),
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White
+                    )
                 )
+
+                // Quantity and Unit Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Quantity Field
+                    OutlinedTextField(
+                        value = quantityText,
+                        onValueChange = { quantityText = it },
+                        placeholder = { Text("পরিমাণ", color = Color(0xFF94A3B8)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF64748B),
+                            unfocusedBorderColor = Color(0xFF94A3B8),
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White
+                        )
+                    )
+
+                    // Unit Dropdown
+                    Box(modifier = Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = selectedUnit,
+                            onValueChange = {},
+                            readOnly = true,
+                            singleLine = true,
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Select Unit",
+                                    tint = Color(0xFF15803D)
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { unitDropdownExpanded = true },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF64748B),
+                                unfocusedBorderColor = Color(0xFF94A3B8),
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White
+                            )
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { unitDropdownExpanded = true }
+                        )
+                        DropdownMenu(
+                            expanded = unitDropdownExpanded,
+                            onDismissRequest = { unitDropdownExpanded = false }
+                        ) {
+                            listOf("কেজি", "গ্রাম", "টি").forEach { unitOption ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = unitOption,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedUnit = unitOption
+                                        unitDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Target Price Field
                 OutlinedTextField(
                     value = targetText,
                     onValueChange = { targetText = it },
-                    label = { Text("Target Price (৳)") },
+                    placeholder = { Text("টার্গেট মূল্য ৳", color = Color(0xFF94A3B8)) },
+                    singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = unitQuantity,
-                    onValueChange = { unitQuantity = it },
-                    label = { Text("Unit / Quantity (e.g. 1 kg)") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF64748B),
+                        unfocusedBorderColor = Color(0xFF94A3B8),
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White
+                    )
                 )
             }
         },
@@ -956,16 +1063,25 @@ fun AddBazarItemDialog(
                 onClick = {
                     val target = targetText.toDoubleOrNull() ?: 0.0
                     if (title.isNotBlank()) {
-                        onConfirm(title, target, unitQuantity)
+                        val fullUnit = if (quantityText.isNotBlank()) "$quantityText $selectedUnit" else selectedUnit
+                        onConfirm(title.trim(), target, fullUnit)
                         onDismiss()
                     }
-                }
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
+                modifier = Modifier.height(44.dp)
             ) {
-                Text("Add Item")
+                Text("সংরক্ষণ", fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.height(44.dp)
+            ) {
+                Text("বাতিল", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+            }
         }
     )
 }

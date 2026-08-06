@@ -73,6 +73,10 @@ fun MainAppScreen(
     var selectedPersonForTx by remember { mutableStateOf<PeopleDueEntity?>(null) }
     var selectedTxForPayment by remember { mutableStateOf<Pair<com.example.data.PersonTransactionEntity, Double>?>(null) }
 
+    var trackerPrefillData by remember {
+        mutableStateOf<Triple<String, Double, Pair<String, String>>?>(null)
+    }
+
     Scaffold(
         topBar = {
             MenegerHeader(
@@ -146,6 +150,9 @@ fun MainAppScreen(
                         },
                         onSwapItems = { item1, item2 ->
                             viewModel.swapBazarItems(item1, item2)
+                        },
+                        onAddToTracker = { title, amount, category, description ->
+                            trackerPrefillData = Triple(title, amount, Pair(category, description))
                         }
                     )
                 }
@@ -217,6 +224,35 @@ fun MainAppScreen(
                 )
             }
         }
+    }
+
+    trackerPrefillData?.let { (prefillTitle, prefillAmount, prefillCatDesc) ->
+        val (prefillCategory, prefillDescription) = prefillCatDesc
+        val existingCategories = remember(trackerRecords) {
+            trackerRecords.map { it.category }.filter { it.isNotBlank() && it != "Uncategorized" }.distinct()
+        }
+        AddTrackerRecordDialog(
+            existingCategories = existingCategories,
+            initialTitle = prefillTitle,
+            initialAmountText = if (prefillAmount > 0) prefillAmount.toInt().toString() else "",
+            initialCategory = prefillCategory,
+            initialDescription = prefillDescription,
+            onDismiss = { trackerPrefillData = null },
+            onConfirm = { title, amount, isExpense, category, description, year, month, day, dateString ->
+                viewModel.addTrackerRecord(
+                    title = title,
+                    amount = amount,
+                    isExpense = isExpense,
+                    category = category,
+                    description = description,
+                    year = year,
+                    month = month,
+                    day = day,
+                    dateString = dateString
+                )
+                trackerPrefillData = null
+            }
+        )
     }
 
     selectedBazarItemForSpent?.let { item ->

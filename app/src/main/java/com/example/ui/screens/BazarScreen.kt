@@ -8,12 +8,13 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.BazarItemEntity
@@ -41,17 +43,45 @@ import kotlinx.coroutines.delay
 import java.text.NumberFormat
 import java.util.Locale
 
+private fun Int.toBanglaDigits(): String {
+    val banglaDigits = mapOf(
+        '0' to '০', '1' to '১', '2' to '২', '3' to '৩', '4' to '৪',
+        '5' to '৫', '6' to '৬', '7' to '৭', '8' to '৮', '9' to '৯'
+    )
+    return this.toString().map { banglaDigits[it] ?: it }.joinToString("")
+}
+
 @Composable
 fun BazarScreen(
     bazarItems: List<BazarItemEntity>,
     onRecordSpent: (BazarItemEntity) -> Unit,
     onUpdateSpent: (BazarItemEntity, Double) -> Unit = { _, _ -> },
     onSwapItems: (BazarItemEntity, BazarItemEntity) -> Unit = { _, _ -> },
+    onAddToTracker: (title: String, amount: Double, category: String, description: String) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    val totalTarget = bazarItems.sumOf { it.targetPrice }
-    val totalSpent = bazarItems.sumOf { it.actualSpent }
+    var isSortMode by remember { mutableStateOf(false) }
+    var isSelectMode by remember { mutableStateOf(false) }
+    var disabledItemIds by remember { mutableStateOf(setOf<Long>()) }
+    var selectedItemIds by remember { mutableStateOf(setOf<Long>()) }
+
+    // Active (ON) items for Summary Card
+    val activeItems = remember(bazarItems, disabledItemIds) {
+        bazarItems.filter { it.id !in disabledItemIds }
+    }
+
+    // Selected & Active items for Tracker export
+    val selectedActiveItems = remember(bazarItems, selectedItemIds, disabledItemIds) {
+        bazarItems.filter { it.id in selectedItemIds && it.id !in disabledItemIds }
+    }
+
+    val totalTarget = activeItems.sumOf { it.targetPrice }
+    val totalSpent = activeItems.sumOf { it.actualSpent }
     val difference = totalTarget - totalSpent
+
+    val totalSelectedAmount = remember(selectedActiveItems) {
+        selectedActiveItems.sumOf { if (it.actualSpent > 0) it.actualSpent else it.targetPrice }
+    }
 
     val progressVal = remember(totalSpent, totalTarget) {
         if (totalTarget > 0 && !totalSpent.isNaN() && !totalTarget.isNaN()) {
@@ -64,8 +94,6 @@ fun BazarScreen(
 
     val formatter = NumberFormat.getNumberInstance(Locale.US)
     val focusManager = LocalFocusManager.current
-
-    var isSortMode by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -81,6 +109,7 @@ fun BazarScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(bottom = if (isSelectMode) 80.dp else 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Summary Card
@@ -200,53 +229,108 @@ fun BazarScreen(
 
             // Subheader
             item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Bazar List",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextSecondary
-                    )
-
+                if (isSelectMode) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            onClick = { isSortMode = !isSortMode },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isSortMode) Color(0xFFDCFCE7) else Color.Transparent,
-                            border = if (isSortMode) BorderStroke(1.dp, Color(0xFF15803D)) else null
-                        ) {
-                            Text(
-                                text = if (isSortMode) "✓ Done" else "⇅ Sort",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF15803D),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
                         Text(
-                            text = "≡ Select",
-                            fontSize = 13.sp,
+                            text = "সিলেক্ট করা হয়েছে: ${selectedItemIds.size.toBanglaDigits()}টি",
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF15803D)
                         )
+
+                        Text(
+                            text = "✕ বাতিল",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFDC2626),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { isSelectMode = false }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Bazar List",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextSecondary
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                onClick = {
+                                    isSortMode = !isSortMode
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSortMode) Color(0xFFDCFCE7) else Color.Transparent,
+                                border = if (isSortMode) BorderStroke(1.dp, Color(0xFF15803D)) else null
+                            ) {
+                                Text(
+                                    text = if (isSortMode) "✓ Done" else "⇅ Sort",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+
+                            Surface(
+                                onClick = {
+                                    isSelectMode = true
+                                    isSortMode = false
+                                    selectedItemIds = bazarItems.map { it.id }.toSet()
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.Transparent
+                            ) {
+                                Text(
+                                    text = "≡ Select",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // Items
+            // Items List
             itemsIndexed(bazarItems, key = { index, item -> "${item.id}_$index" }) { index, item ->
+                val isOn = item.id !in disabledItemIds
+                val isSelected = item.id in selectedItemIds
+
                 BazarCardItem(
                     item = item,
                     isSortMode = isSortMode,
+                    isSelectMode = isSelectMode,
+                    isSelected = isSelected,
+                    isOn = isOn,
+                    onToggleSelect = {
+                        selectedItemIds = if (isSelected) {
+                            selectedItemIds - item.id
+                        } else {
+                            selectedItemIds + item.id
+                        }
+                    },
                     isFirst = index == 0,
                     isLast = index == bazarItems.size - 1,
                     onMoveUp = {
@@ -264,6 +348,100 @@ fun BazarScreen(
                 )
             }
         }
+
+        // Floating Bottom Action Bar in Select Mode
+        if (isSelectMode) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp, start = 12.dp, end = 12.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = Color.Transparent,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.95f), RoundedCornerShape(24.dp))
+                        .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // OFF Button
+                    Surface(
+                        onClick = {
+                            disabledItemIds = disabledItemIds + selectedItemIds
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF475569)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "✕ অফ (Off)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // ON Button
+                    Surface(
+                        onClick = {
+                            disabledItemIds = disabledItemIds - selectedItemIds
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF10B981)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "✓ অন (On)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // Add to Tracker Button
+                    Surface(
+                        onClick = {
+                            if (selectedActiveItems.isNotEmpty()) {
+                                val desc = selectedActiveItems.joinToString(", ") { "${it.title} (${it.unitQuantity})" }
+                                onAddToTracker("বাজার খরচ", totalSelectedAmount, "বাজার", desc)
+                            }
+                        },
+                        modifier = Modifier.weight(1.5f),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF2563EB)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "➤ ট্রেকারে যুক্ত (৳${formatter.format(totalSelectedAmount.toInt())})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -271,6 +449,10 @@ fun BazarScreen(
 private fun BazarCardItem(
     item: BazarItemEntity,
     isSortMode: Boolean,
+    isSelectMode: Boolean,
+    isSelected: Boolean,
+    isOn: Boolean,
+    onToggleSelect: () -> Unit,
     isFirst: Boolean,
     isLast: Boolean,
     onMoveUp: () -> Unit,
@@ -317,12 +499,18 @@ private fun BazarCardItem(
         }
     }
 
+    // Card background: normal white when ON, off-color grey when OFF
+    val cardBg = if (isOn) Color.White else Color(0xFFF1F5F9)
+    val cardBorderColor = if (isOn) CardBorder else Color(0xFFCBD5E1)
+    val titleTextColor = if (isOn) TextPrimary else Color(0xFF64748B)
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, CardBorder, RoundedCornerShape(16.dp)),
+            .border(1.dp, cardBorderColor, RoundedCornerShape(16.dp))
+            .clickable(enabled = isSelectMode) { onToggleSelect() },
         shape = RoundedCornerShape(16.dp),
-        color = Color.White
+        color = cardBg
     ) {
         Row(
             modifier = Modifier
@@ -331,6 +519,33 @@ private fun BazarCardItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // Select Mode Checkbox/Radio Circle
+            if (isSelectMode) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) Color(0xFF15803D) else Color.Transparent)
+                        .border(
+                            width = if (isSelected) 0.dp else 2.dp,
+                            color = if (isSelected) Color.Transparent else Color(0xFFCBD5E1),
+                            shape = CircleShape
+                        )
+                        .clickable { onToggleSelect() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+
             // Sort controls (Up / Down arrows)
             if (isSortMode) {
                 Column(
@@ -365,18 +580,19 @@ private fun BazarCardItem(
                 }
             }
 
+            // Item Title & Target Price
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.title,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = TextPrimary
+                    color = titleTextColor
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Target: ৳${formatter.format(item.targetPrice.toInt())}",
+                    text = "টার্গেট: ৳${formatter.format(item.targetPrice.toInt())}",
                     fontSize = 12.sp,
-                    color = TextMuted
+                    color = if (isOn) TextMuted else Color(0xFF94A3B8)
                 )
             }
 
@@ -385,21 +601,41 @@ private fun BazarCardItem(
             // Quantity badge
             Surface(
                 modifier = Modifier.clip(RoundedCornerShape(8.dp)),
-                color = Color(0xFFEEF2FF)
+                color = if (isOn) Color(0xFFEEF2FF) else Color(0xFFE2E8F0)
             ) {
                 Text(
                     text = item.unitQuantity,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF4F46E5),
+                    color = if (isOn) Color(0xFF4F46E5) else Color(0xFF64748B),
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                 )
             }
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Price Field (Inline Editable / Clickable Text)
-            if (isEditing) {
+            // Price Field
+            if (!isOn) {
+                // Disabled when OFF
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                    color = Color(0xFFE2E8F0),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "OFF",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+            } else if (isEditing) {
                 BasicTextField(
                     value = tempPriceValue,
                     onValueChange = { tempPriceValue = it },
@@ -442,8 +678,8 @@ private fun BazarCardItem(
                         ) {
                             if (tempPriceValue.text.isEmpty()) {
                                 Text(
-                                    text = "Prize",
-                                    fontSize = 12.sp,
+                                    text = "খরচ লিখুন",
+                                    fontSize = 11.sp,
                                     color = TextMuted,
                                     textAlign = TextAlign.Center
                                 )
@@ -454,7 +690,7 @@ private fun BazarCardItem(
                 )
             } else {
                 Surface(
-                    onClick = { isEditing = true },
+                    onClick = { if (!isSelectMode) isEditing = true },
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, if (item.actualSpent > 0) Color(0xFF15803D) else CardBorder),
                     color = if (item.actualSpent > 0) Color(0xFFDCFCE7) else Color.White,
@@ -465,10 +701,10 @@ private fun BazarCardItem(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (item.actualSpent > 0) "৳${formatter.format(item.actualSpent.toInt())}" else "Prize",
-                            fontSize = 12.sp,
+                            text = if (item.actualSpent > 0) "৳${formatter.format(item.actualSpent.toInt())}" else "খরচ লিখুন",
+                            fontSize = 11.sp,
                             fontWeight = if (item.actualSpent > 0) FontWeight.Bold else FontWeight.Medium,
-                            color = if (item.actualSpent > 0) Color(0xFF15803D) else TextSecondary
+                            color = if (item.actualSpent > 0) Color(0xFF15803D) else TextMuted
                         )
                     }
                 }
@@ -476,5 +712,3 @@ private fun BazarCardItem(
         }
     }
 }
-
-
