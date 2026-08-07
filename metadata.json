@@ -1,6 +1,6 @@
 {
   "name": "Meneger2.0",
-  "description": "All-in-One Personal Dashboard for Notebook, Accounts, Tracker, Bazar, and Budget management.",
+  "description": "A complete and professional all-in-one Finance Manager application.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
