@@ -3,6 +3,8 @@ package com.example
 import com.example.data.AppDatabase
 import com.example.data.MarketItemDao
 import com.example.data.MarketItem
+import com.example.data.preferences.UserPreferences
+import com.example.data.preferences.UserPreferencesRepository
 import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
@@ -208,7 +210,8 @@ class FinanceViewModel(
     val dao: FinanceDao,
     val marketItemDao: MarketItemDao,
     val categoryDao: com.example.data.local.dao.CategoryDao? = null,
-    val expenseDao: com.example.data.local.dao.ExpenseDao? = null
+    val expenseDao: com.example.data.local.dao.ExpenseDao? = null,
+    val userPreferencesRepository: UserPreferencesRepository? = null
 ) : ViewModel() {
     val profile = dao.getProfileFlow()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -233,6 +236,10 @@ class FinanceViewModel(
         ?.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
         ?: MutableStateFlow(emptyList())
 
+    val userPreferences = userPreferencesRepository?.userPreferencesFlow
+        ?.stateIn(viewModelScope, SharingStarted.Eagerly, UserPreferences())
+        ?: MutableStateFlow(UserPreferences())
+
     // Firebase and Google Sign-In state
     var currentUserState by mutableStateOf<FirebaseUser?>(
         try { FirebaseAuth.getInstance().currentUser } catch (e: Throwable) { null }
@@ -240,6 +247,16 @@ class FinanceViewModel(
     var isSyncingFromCloud by mutableStateOf(false)
     var isConnectingToCloud by mutableStateOf(false)
     val isLocalDataLoadedState = MutableStateFlow(false)
+
+    fun isLocalDataNotEmpty(): Boolean {
+        return transactions.value.isNotEmpty() ||
+                persons.value.isNotEmpty() ||
+                notices.value.isNotEmpty() ||
+                marketItems.value.isNotEmpty() ||
+                categories.value.isNotEmpty() ||
+                expenses.value.isNotEmpty() ||
+                (profile.value != null && (profile.value!!.openingBalance != 0.0 || profile.value!!.monthlySalary != 0.0))
+    }
 
     init {
         // Wait for first emission from database before enabling auto-upload to cloud, and auto-restore if empty
@@ -249,16 +266,21 @@ class FinanceViewModel(
                 val dbPersonsDef = async { dao.getAllPersonsFlow().first() }
                 val dbNoticesDef = async { dao.getAllNoticesFlow().first() }
                 val dbMarketDef = async { marketItemDao.getAllItems().first() }
-                
+                val dbCatsDef = async { categoryDao?.getAllCategories()?.first() ?: emptyList() }
+                val dbExpsDef = async { expenseDao?.getAllExpenses()?.first() ?: emptyList() }
+
                 val dbTxs = dbTxsDef.await()
                 val dbPersons = dbPersonsDef.await()
                 val dbNotices = dbNoticesDef.await()
                 val dbMarket = dbMarketDef.await()
-                dao.getProfileFlow().first()
-                
+                val dbCats = dbCatsDef.await()
+                val dbExps = dbExpsDef.await()
+                val dbProf = dao.getProfileFlow().first()
+
                 val user = try { FirebaseAuth.getInstance().currentUser } catch (e: Throwable) { null }
                 if (user != null) {
-                    if (dbTxs.isEmpty() && dbPersons.isEmpty() && dbNotices.isEmpty() && dbMarket.isEmpty()) {
+                    val hasData = dbTxs.isNotEmpty() || dbPersons.isNotEmpty() || dbNotices.isNotEmpty() || dbMarket.isNotEmpty() || dbCats.isNotEmpty() || dbExps.isNotEmpty() || (dbProf != null && (dbProf.openingBalance != 0.0 || dbProf.monthlySalary != 0.0))
+                    if (!hasData) {
                         syncFromCloud(user.uid)
                     }
                 }
@@ -271,7 +293,18 @@ class FinanceViewModel(
 
         // Observe local database changes and upload to cloud if signed in
         viewModelScope.launch(Dispatchers.IO) {
-            val dbChanges = combine(listOf(transactions, persons, notices, profile, marketItems, categories, expenses)) {
+            val dbChanges = combine(
+                listOf(
+                    transactions,
+                    persons,
+                    notices,
+                    profile,
+                    marketItems,
+                    categories,
+                    expenses,
+                    userPreferences
+                )
+            ) { _ ->
                 true
             }
             combine(dbChanges, isLocalDataLoadedState) { _, loaded ->
@@ -322,12 +355,12 @@ class FinanceViewModel(
                 .getReference("users")
                 .child(uid)
                 .child("data_v1")
-            
+
             dbRef.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     val jsonText = snapshot.getValue(String::class.java)
                     if (jsonText != null && jsonText.isNotEmpty()) {
-                        viewModelScope.launch {
+                        viewModelScope.launch(Dispatchers.IO) {
                             isSyncingFromCloud = true
                             try {
                                 restoreFromJsonString(jsonText)
@@ -342,7 +375,7 @@ class FinanceViewModel(
                         // No data on cloud, save local data if not empty
                         isConnectingToCloud = false
                         val localJson = generateBackupJsonString()
-                        if (localJson.isNotEmpty() && (transactions.value.isNotEmpty() || persons.value.isNotEmpty() || notices.value.isNotEmpty() || marketItems.value.isNotEmpty())) {
+                        if (localJson.isNotEmpty() && isLocalDataNotEmpty()) {
                             dbRef.setValue(localJson)
                         }
                     }
@@ -359,7 +392,7 @@ class FinanceViewModel(
     }
 
     fun logoutAndClearLocal(onComplete: () -> Unit = {}) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             isSyncingFromCloud = true
             try {
                 dao.clearTransactions()
@@ -367,6 +400,9 @@ class FinanceViewModel(
                 dao.clearNotices()
                 dao.clearProfile()
                 marketItemDao.clearAllItems()
+                categoryDao?.deleteAllCategories()
+                expenseDao?.deleteAllExpenses()
+                userPreferencesRepository?.clearAllPreferences()
                 // Default profile setup
                 dao.insertProfile(ProfileEntity(1, 0.0, 0.0, false))
             } catch (e: Exception) {
@@ -379,8 +415,76 @@ class FinanceViewModel(
                     e.printStackTrace()
                 }
                 currentUserState = null
-                onComplete()
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onComplete()
+                }
             }
+        }
+    }
+
+    fun loginWithEmail(email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        if (email.isBlank() || pass.isBlank()) {
+            onResult(false, "ইমেইল ও পাসওয়ার্ড প্রদান করুন")
+            return
+        }
+        try {
+            FirebaseAuth.getInstance().signInWithEmailAndPassword(email.trim(), pass.trim())
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        currentUserState = FirebaseAuth.getInstance().currentUser
+                        val uid = currentUserState?.uid ?: ""
+                        if (uid.isNotEmpty()) syncFromCloud(uid)
+                        onResult(true, null)
+                    } else {
+                        onResult(false, task.exception?.localizedMessage ?: "সাইন-ইন ব্যর্থ হয়েছে")
+                    }
+                }
+        } catch (e: Throwable) {
+            onResult(false, e.message ?: "Firebase সার্ভিস লভ্য নয়")
+        }
+    }
+
+    fun registerWithEmail(email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        if (email.isBlank() || pass.isBlank()) {
+            onResult(false, "ইমেইল ও পাসওয়ার্ড প্রদান করুন")
+            return
+        }
+        if (pass.length < 6) {
+            onResult(false, "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে")
+            return
+        }
+        try {
+            FirebaseAuth.getInstance().createUserWithEmailAndPassword(email.trim(), pass.trim())
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        currentUserState = FirebaseAuth.getInstance().currentUser
+                        val uid = currentUserState?.uid ?: ""
+                        if (uid.isNotEmpty()) syncFromCloud(uid)
+                        onResult(true, null)
+                    } else {
+                        onResult(false, task.exception?.localizedMessage ?: "রেজিস্ট্রেশন ব্যর্থ হয়েছে")
+                    }
+                }
+        } catch (e: Throwable) {
+            onResult(false, e.message ?: "Firebase সার্ভিস লভ্য নয়")
+        }
+    }
+
+    fun loginAnonymously(onResult: (Boolean, String?) -> Unit) {
+        try {
+            FirebaseAuth.getInstance().signInAnonymously()
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        currentUserState = FirebaseAuth.getInstance().currentUser
+                        val uid = currentUserState?.uid ?: ""
+                        if (uid.isNotEmpty()) syncFromCloud(uid)
+                        onResult(true, null)
+                    } else {
+                        onResult(false, task.exception?.localizedMessage ?: "গেস্ট লগইন ব্যর্থ হয়েছে")
+                    }
+                }
+        } catch (e: Throwable) {
+            onResult(false, e.message ?: "Firebase সার্ভিস লভ্য নয়")
         }
     }
 
@@ -440,7 +544,7 @@ class FinanceViewModel(
             val rootObj = JSONObject()
             rootObj.put("version", 1)
 
-            // Profile
+            // 1. Profile
             val p = profile.value
             if (p != null) {
                 val pObj = JSONObject()
@@ -451,7 +555,7 @@ class FinanceViewModel(
                 rootObj.put("profile", pObj)
             }
 
-            // Persons
+            // 2. Persons
             val personsArray = JSONArray()
             persons.value.forEach { person ->
                 val personObj = JSONObject()
@@ -461,7 +565,7 @@ class FinanceViewModel(
             }
             rootObj.put("persons", personsArray)
 
-            // Transactions
+            // 3. Transactions
             val txArray = JSONArray()
             transactions.value.forEach { tx ->
                 val txObj = JSONObject()
@@ -479,7 +583,7 @@ class FinanceViewModel(
             }
             rootObj.put("transactions", txArray)
 
-            // Notices
+            // 4. Notices
             val noticesArray = JSONArray()
             notices.value.forEach { notice ->
                 val noticeObj = JSONObject()
@@ -491,7 +595,7 @@ class FinanceViewModel(
             }
             rootObj.put("notices", noticesArray)
 
-            // Market Items (Bazaar)
+            // 5. Market Items (Bazaar)
             val marketItemsArray = JSONArray()
             marketItems.value.forEach { item ->
                 val itemObj = JSONObject()
@@ -506,7 +610,7 @@ class FinanceViewModel(
             }
             rootObj.put("market_items", marketItemsArray)
 
-            // Categories
+            // 6. Categories
             val categoriesArray = JSONArray()
             categories.value.forEach { cat ->
                 val catObj = JSONObject()
@@ -517,7 +621,7 @@ class FinanceViewModel(
             }
             rootObj.put("categories", categoriesArray)
 
-            // Expenses
+            // 7. Expenses
             val expensesArray = JSONArray()
             expenses.value.forEach { exp ->
                 val expObj = JSONObject()
@@ -530,6 +634,15 @@ class FinanceViewModel(
             }
             rootObj.put("expenses", expensesArray)
 
+            // 8. User Preferences
+            val prefs = userPreferences.value
+            val prefObj = JSONObject()
+            prefObj.put("isDarkMode", prefs.isDarkMode)
+            prefObj.put("currencySymbol", prefs.currencySymbol)
+            prefObj.put("isDailyReminderEnabled", prefs.isDailyReminderEnabled)
+            prefObj.put("selectedCategoryFilter", prefs.selectedCategoryFilter)
+            rootObj.put("user_preferences", prefObj)
+
             rootObj.toString(2)
         } catch (e: Exception) {
             ""
@@ -537,142 +650,176 @@ class FinanceViewModel(
     }
 
     suspend fun restoreFromJsonString(jsonString: String): Boolean {
-        return try {
-            val rootObj = JSONObject(jsonString)
-            if (!rootObj.has("transactions") && !rootObj.has("persons") && !rootObj.has("notices") && !rootObj.has("profile") && !rootObj.has("market_items") && !rootObj.has("categories") && !rootObj.has("expenses")) {
-                return false
-            }
-
-            // Clear tables
-            dao.clearTransactions()
-            dao.clearPersons()
-            dao.clearNotices()
-            dao.clearProfile()
-            marketItemDao.clearAllItems()
-            categoryDao?.deleteAllCategories()
-            expenseDao?.deleteAllExpenses()
-
-            // Restore Profile
-            if (rootObj.has("profile")) {
-                val pObj = rootObj.getJSONObject("profile")
-                val profileEntity = ProfileEntity(
-                    id = pObj.optInt("id", 1),
-                    openingBalance = pObj.optDouble("openingBalance", 0.0),
-                    monthlySalary = pObj.optDouble("monthlySalary", 0.0),
-                    isSalaryIncluded = pObj.optBoolean("isSalaryIncluded", false)
-                )
-                dao.insertProfile(profileEntity)
-            } else {
-                dao.insertProfile(ProfileEntity(1, 0.0, 0.0, false))
-            }
-
-            // Restore Persons
-            if (rootObj.has("persons")) {
-                val pArray = rootObj.getJSONArray("persons")
-                for (i in 0 until pArray.length()) {
-                    val pObj = pArray.getJSONObject(i)
-                    val person = PersonEntity(
-                        id = pObj.getInt("id"),
-                        name = pObj.getString("name")
-                    )
-                    dao.insertPerson(person)
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                val rootObj = JSONObject(jsonString)
+                val hasValidData = rootObj.has("transactions") ||
+                        rootObj.has("persons") ||
+                        rootObj.has("notices") ||
+                        rootObj.has("profile") ||
+                        rootObj.has("market_items") ||
+                        rootObj.has("categories") ||
+                        rootObj.has("expenses") ||
+                        rootObj.has("user_preferences") ||
+                        rootObj.has("currencySymbol")
+                if (!hasValidData) {
+                    return@withContext false
                 }
-            }
 
-            // Restore Transactions
-            if (rootObj.has("transactions")) {
-                val tArray = rootObj.getJSONArray("transactions")
-                for (i in 0 until tArray.length()) {
-                    val tObj = tArray.getJSONObject(i)
-                    val tx = TransactionEntity(
-                        id = tObj.getInt("id"),
-                        amount = tObj.getDouble("amount"),
-                        type = tObj.getString("type"),
-                        category = tObj.getString("category"),
-                        dateTime = tObj.getLong("dateTime"),
-                        note = tObj.optString("note", ""),
-                        personName = tObj.optString("personName", "General"),
-                        paidAmount = tObj.optDouble("paidAmount", 0.0),
-                        repaymentsCsv = tObj.optString("repaymentsCsv", ""),
-                        isPersonal = tObj.optBoolean("isPersonal", false)
+                // Clear existing tables
+                dao.clearTransactions()
+                dao.clearPersons()
+                dao.clearNotices()
+                dao.clearProfile()
+                marketItemDao.clearAllItems()
+                categoryDao?.deleteAllCategories()
+                expenseDao?.deleteAllExpenses()
+
+                // 1. Restore Profile
+                if (rootObj.has("profile")) {
+                    val pObj = rootObj.getJSONObject("profile")
+                    val profileEntity = ProfileEntity(
+                        id = pObj.optInt("id", 1),
+                        openingBalance = pObj.optDouble("openingBalance", 0.0),
+                        monthlySalary = pObj.optDouble("monthlySalary", 0.0),
+                        isSalaryIncluded = pObj.optBoolean("isSalaryIncluded", false)
                     )
-                    dao.insertTransaction(tx)
+                    dao.insertProfile(profileEntity)
+                } else {
+                    dao.insertProfile(ProfileEntity(1, 0.0, 0.0, false))
                 }
-            }
 
-            // Restore Notices
-            if (rootObj.has("notices")) {
-                val nArray = rootObj.getJSONArray("notices")
-                for (i in 0 until nArray.length()) {
-                    val nObj = nArray.getJSONObject(i)
-                    val notice = NoticeEntity(
-                        id = nObj.getInt("id"),
-                        content = nObj.getString("content"),
-                        timestamp = nObj.getLong("timestamp"),
-                        colorHex = nObj.optString("colorHex", "#FFF9C4")
-                    )
-                    dao.insertNotice(notice)
-                }
-            }
-
-            // Restore Market Items
-            if (rootObj.has("market_items")) {
-                val mArray = rootObj.getJSONArray("market_items")
-                for (i in 0 until mArray.length()) {
-                    val mObj = mArray.getJSONObject(i)
-                    val item = MarketItem(
-                        id = mObj.getInt("id"),
-                        description = mObj.getString("description"),
-                        quantity = mObj.optString("quantity", ""),
-                        targetPrice = mObj.optDouble("targetPrice", 0.0),
-                        actualPrice = mObj.optDouble("actualPrice", 0.0),
-                        isActive = mObj.optBoolean("isActive", true),
-                        timestamp = mObj.optLong("timestamp", System.currentTimeMillis())
-                    )
-                    marketItemDao.insertItem(item)
-                }
-            }
-
-            // Restore Categories
-            if (rootObj.has("categories") && categoryDao != null) {
-                val catArray = rootObj.getJSONArray("categories")
-                val catList = mutableListOf<com.example.data.local.entity.CategoryEntity>()
-                for (i in 0 until catArray.length()) {
-                    val cObj = catArray.getJSONObject(i)
-                    catList.add(
-                        com.example.data.local.entity.CategoryEntity(
-                            id = cObj.optLong("id", 0L),
-                            name = cObj.getString("name"),
-                            budget = cObj.optDouble("budget", 0.0)
+                // 2. Restore Persons
+                if (rootObj.has("persons")) {
+                    val pArray = rootObj.getJSONArray("persons")
+                    for (i in 0 until pArray.length()) {
+                        val pObj = pArray.getJSONObject(i)
+                        val person = PersonEntity(
+                            id = pObj.optInt("id", 0),
+                            name = pObj.optString("name", "")
                         )
-                    )
+                        if (person.name.isNotEmpty()) {
+                            dao.insertPerson(person)
+                        }
+                    }
                 }
-                categoryDao.insertCategories(catList)
-            }
 
-            // Restore Expenses
-            if (rootObj.has("expenses") && expenseDao != null) {
-                val expArray = rootObj.getJSONArray("expenses")
-                val expList = mutableListOf<com.example.data.local.entity.ExpenseEntity>()
-                for (i in 0 until expArray.length()) {
-                    val eObj = expArray.getJSONObject(i)
-                    expList.add(
-                        com.example.data.local.entity.ExpenseEntity(
-                            id = eObj.optLong("id", 0L),
-                            description = eObj.getString("description"),
-                            amount = eObj.getDouble("amount"),
-                            date = eObj.getLong("date"),
-                            categoryId = eObj.getLong("categoryId")
+                // 3. Restore Transactions
+                if (rootObj.has("transactions")) {
+                    val tArray = rootObj.getJSONArray("transactions")
+                    for (i in 0 until tArray.length()) {
+                        val tObj = tArray.getJSONObject(i)
+                        val tx = TransactionEntity(
+                            id = tObj.optInt("id", 0),
+                            amount = tObj.optDouble("amount", 0.0),
+                            type = tObj.optString("type", "INCOME"),
+                            category = tObj.optString("category", "General"),
+                            dateTime = tObj.optLong("dateTime", System.currentTimeMillis()),
+                            note = tObj.optString("note", ""),
+                            personName = tObj.optString("personName", "General"),
+                            paidAmount = tObj.optDouble("paidAmount", 0.0),
+                            repaymentsCsv = tObj.optString("repaymentsCsv", ""),
+                            isPersonal = tObj.optBoolean("isPersonal", false)
                         )
-                    )
+                        dao.insertTransaction(tx)
+                    }
                 }
-                expenseDao.insertExpenses(expList)
-            }
 
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
+                // 4. Restore Notices
+                if (rootObj.has("notices")) {
+                    val nArray = rootObj.getJSONArray("notices")
+                    for (i in 0 until nArray.length()) {
+                        val nObj = nArray.getJSONObject(i)
+                        val notice = NoticeEntity(
+                            id = nObj.optInt("id", 0),
+                            content = nObj.optString("content", ""),
+                            timestamp = nObj.optLong("timestamp", System.currentTimeMillis()),
+                            colorHex = nObj.optString("colorHex", "#FFF9C4")
+                        )
+                        dao.insertNotice(notice)
+                    }
+                }
+
+                // 5. Restore Market Items
+                if (rootObj.has("market_items")) {
+                    val mArray = rootObj.getJSONArray("market_items")
+                    for (i in 0 until mArray.length()) {
+                        val mObj = mArray.getJSONObject(i)
+                        val item = MarketItem(
+                            id = mObj.optInt("id", 0),
+                            description = mObj.optString("description", ""),
+                            quantity = mObj.optString("quantity", ""),
+                            targetPrice = mObj.optDouble("targetPrice", 0.0),
+                            actualPrice = mObj.optDouble("actualPrice", 0.0),
+                            isActive = mObj.optBoolean("isActive", true),
+                            timestamp = mObj.optLong("timestamp", System.currentTimeMillis())
+                        )
+                        marketItemDao.insertItem(item)
+                    }
+                }
+
+                // 6. Restore Categories
+                if (rootObj.has("categories") && categoryDao != null) {
+                    val catArray = rootObj.getJSONArray("categories")
+                    val catList = mutableListOf<com.example.data.local.entity.CategoryEntity>()
+                    for (i in 0 until catArray.length()) {
+                        val cObj = catArray.getJSONObject(i)
+                        catList.add(
+                            com.example.data.local.entity.CategoryEntity(
+                                id = cObj.optLong("id", 0L),
+                                name = cObj.optString("name", "General"),
+                                budget = cObj.optDouble("budget", 0.0)
+                            )
+                        )
+                    }
+                    categoryDao.insertCategories(catList)
+                }
+
+                // 7. Restore Expenses
+                if (rootObj.has("expenses") && expenseDao != null) {
+                    val expArray = rootObj.getJSONArray("expenses")
+                    val expList = mutableListOf<com.example.data.local.entity.ExpenseEntity>()
+                    for (i in 0 until expArray.length()) {
+                        val eObj = expArray.getJSONObject(i)
+                        expList.add(
+                            com.example.data.local.entity.ExpenseEntity(
+                                id = eObj.optLong("id", 0L),
+                                description = eObj.optString("description", ""),
+                                amount = eObj.optDouble("amount", 0.0),
+                                date = eObj.optLong("date", System.currentTimeMillis()),
+                                categoryId = eObj.optLong("categoryId", 0L)
+                            )
+                        )
+                    }
+                    expenseDao.insertExpenses(expList)
+                }
+
+                // 8. Restore Preferences
+                if (userPreferencesRepository != null) {
+                    if (rootObj.has("user_preferences")) {
+                        val prefObj = rootObj.getJSONObject("user_preferences")
+                        val isDarkMode = prefObj.optBoolean("isDarkMode", false)
+                        val currencySymbol = prefObj.optString("currencySymbol", "৳")
+                        val isDailyReminderEnabled = prefObj.optBoolean("isDailyReminderEnabled", false)
+                        val selectedCategoryFilter = prefObj.optLong("selectedCategoryFilter", -1L)
+
+                        userPreferencesRepository.updateDarkMode(isDarkMode)
+                        userPreferencesRepository.updateCurrencySymbol(currencySymbol)
+                        userPreferencesRepository.updateDailyReminder(isDailyReminderEnabled)
+                        userPreferencesRepository.updateSelectedCategoryFilter(selectedCategoryFilter)
+                    } else if (rootObj.has("currencySymbol") || rootObj.has("isDarkMode")) {
+                        val isDarkMode = rootObj.optBoolean("isDarkMode", false)
+                        val currencySymbol = rootObj.optString("currencySymbol", "৳")
+                        userPreferencesRepository.updateDarkMode(isDarkMode)
+                        userPreferencesRepository.updateCurrencySymbol(currencySymbol)
+                    }
+                }
+
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
         }
     }
 
@@ -994,12 +1141,13 @@ class FinanceViewModelFactory(
     private val dao: FinanceDao,
     private val marketItemDao: MarketItemDao,
     private val categoryDao: com.example.data.local.dao.CategoryDao,
-    private val expenseDao: com.example.data.local.dao.ExpenseDao
+    private val expenseDao: com.example.data.local.dao.ExpenseDao,
+    private val userPreferencesRepository: UserPreferencesRepository
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(FinanceViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return FinanceViewModel(dao, marketItemDao, categoryDao, expenseDao) as T
+            return FinanceViewModel(dao, marketItemDao, categoryDao, expenseDao, userPreferencesRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
@@ -1042,12 +1190,14 @@ class MainActivity : ComponentActivity() {
             val db = remember { FinanceDatabase.getDatabase(context, "Default") }
             val marketDb = remember { AppDatabase.getDatabase(context) }
             val localDb = remember { com.example.data.local.AppDatabase.getDatabase(context) }
+            val userPrefsRepo = remember { UserPreferencesRepository(context) }
             val viewModelFactory = remember {
                 FinanceViewModelFactory(
                     db.financeDao(),
                     marketDb.marketItemDao(),
                     localDb.categoryDao(),
-                    localDb.expenseDao()
+                    localDb.expenseDao(),
+                    userPrefsRepo
                 )
             }
 
@@ -1709,6 +1859,8 @@ fun AppHeader(
     val currentUser = viewModel.currentUserState
     var showAuthDialog by remember { mutableStateOf(false) }
     var showCredentials by remember { mutableStateOf(false) }
+    var emailInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
 
     // Google Sign-In setup
     val gso = remember {
@@ -1743,7 +1895,12 @@ fun AppHeader(
                 }
             }
         } catch (e: Exception) {
-            Toast.makeText(context, "ভুল হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            val msg = e.localizedMessage ?: ""
+            if (msg.contains("10") || msg.contains("12500")) {
+                Toast.makeText(context, "Google Sign-In Error (10): Google Play Services বা SHA-1 সমস্যা। আপনি বিকল্প ইমেইল বা গেস্ট সিঙ্ক ব্যবহার করতে পারেন।", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "ভুল হয়েছে: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -1752,7 +1909,7 @@ fun AppHeader(
             onDismissRequest = { showAuthDialog = false },
             title = {
                 Text(
-                    text = "প্রোফাইল ও অ্যাপ তথ্য ℹ️",
+                    text = if (currentUser != null) "প্রোফাইল ও ক্লাউড হিসাব 👤" else "লগইন ও সাইন-ইন অপশন 🔑",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF0F172A)
@@ -1764,41 +1921,203 @@ fun AppHeader(
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Profile picture
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(if (currentUser != null) Color(0xFF2E7D32) else Color(0xFF64748B)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val photoUrl = currentUser?.photoUrl?.toString()
-                        if (photoUrl != null) {
-                            Image(
-                                painter = rememberAsyncImagePainter(photoUrl),
-                                contentDescription = "Profile Picture",
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            val initial = currentUser?.displayName?.firstOrNull()?.uppercase() ?: "G"
+                    if (currentUser != null) {
+                        // User Profile Box
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF2E7D32)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val photoUrl = currentUser.photoUrl?.toString()
+                            if (photoUrl != null) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(photoUrl),
+                                    contentDescription = "Profile Picture",
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                val initial = currentUser.displayName?.firstOrNull()?.uppercase()
+                                    ?: currentUser.email?.firstOrNull()?.uppercase()
+                                    ?: "U"
+                                Text(
+                                    text = initial,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 24.sp
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = currentUser.displayName ?: currentUser.email ?: "Guest User (${currentUser.uid.take(6)})",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
+                        )
+
+                        Text(
+                            text = "ক্লাউড অটো-সিঙ্ক সক্রিয় 🟢",
+                            fontSize = 12.sp,
+                            color = Color(0xFF2E7D32),
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Button(
+                                onClick = {
+                                    viewModel.syncFromCloud(currentUser.uid)
+                                    Toast.makeText(context, "ক্লাউড থেকে ডাটা সিঙ্ক হচ্ছে... 🔄", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("সিঙ্ক করুন", color = Color.White, fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    showAuthDialog = false
+                                    viewModel.logoutAndClearLocal {
+                                        googleSignInClient.signOut().addOnCompleteListener {
+                                            Toast.makeText(context, "লগআউট সফল হয়েছে!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("লগআউট", color = Color.White, fontSize = 12.sp)
+                            }
+                        }
+                    } else {
+                        // Not logged in -> Show Auth options
+                        Text(
+                            text = "আপনার ডাটা ক্লাউডে সুরক্ষিত রাখতে যে কোনো একটি উপায়ে সাইন-ইন করুন:",
+                            fontSize = 12.sp,
+                            color = Color(0xFF475569)
+                        )
+
+                        // 1. Google Sign-In Button
+                        Button(
+                            onClick = {
+                                try {
+                                    googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                                } catch (e: Throwable) {
+                                    Toast.makeText(context, "গুগল সাইন-ইন চালু করা যায়নি: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("গুগল (Google) দিয়ে সাইন-ইন", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        Divider(color = Color(0xFFE2E8F0), thickness = 1.dp)
+
+                        // 2. Email / Password Login & Register
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFFF8FAFC), RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
-                                text = initial,
-                                color = Color.White,
+                                text = "ইমেইল ও পাসওয়ার্ড সাইন-ইন ✉️",
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 28.sp
+                                color = Color(0xFF1E293B)
                             )
+
+                            OutlinedTextField(
+                                value = emailInput,
+                                onValueChange = { emailInput = it },
+                                label = { Text("ইমেইল এড্রেস", fontSize = 11.sp) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                            )
+
+                            OutlinedTextField(
+                                value = passwordInput,
+                                onValueChange = { passwordInput = it },
+                                label = { Text("পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)", fontSize = 11.sp) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Button(
+                                    onClick = {
+                                        viewModel.loginWithEmail(emailInput, passwordInput) { success, error ->
+                                            if (success) {
+                                                Toast.makeText(context, "ইমেইল লগইন সফল হয়েছে! 🎉", Toast.LENGTH_SHORT).show()
+                                                showAuthDialog = false
+                                            } else {
+                                                Toast.makeText(context, error ?: "লগইন ব্যর্থ হয়েছে", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("লগইন", color = Color.White, fontSize = 12.sp)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        viewModel.registerWithEmail(emailInput, passwordInput) { success, error ->
+                                            if (success) {
+                                                Toast.makeText(context, "নতুন অ্যাকাউন্ট তৈরি সফল হয়েছে! 🎉", Toast.LENGTH_SHORT).show()
+                                                showAuthDialog = false
+                                            } else {
+                                                Toast.makeText(context, error ?: "রেজিস্ট্রেশন ব্যর্থ হয়েছে", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("রেজিস্টার", color = Color.White, fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        // 3. Guest Sign-In
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.loginAnonymously { success, error ->
+                                    if (success) {
+                                        Toast.makeText(context, "ইনস্ট্যান্ট গেস্ট সিঙ্ক সক্রিয় করা হয়েছে! 🎉", Toast.LENGTH_SHORT).show()
+                                        showAuthDialog = false
+                                    } else {
+                                        Toast.makeText(context, error ?: "গেস্ট সিঙ্ক ব্যর্থ হয়েছে", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFF64748B))
+                        ) {
+                            Text("ইনস্ট্যান্ট গেস্ট সিঙ্ক শুরু করুন (পাসওয়ার্ড ছাড়া)", color = Color(0xFF334155), fontSize = 12.sp)
                         }
                     }
-
-                    // Profile Name
-                    Text(
-                        text = currentUser?.displayName ?: "Guest User",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A)
-                    )
 
                     Divider(color = Color(0xFFE2E8F0), thickness = 1.dp)
 
@@ -1835,12 +2154,10 @@ fun AppHeader(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = { showAuthDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                    shape = RoundedCornerShape(8.dp)
+                TextButton(
+                    onClick = { showAuthDialog = false }
                 ) {
-                    Text("ঠিক আছে", color = Color.White, fontSize = 12.sp)
+                    Text("বন্ধ করুন", color = Color(0xFF64748B), fontSize = 12.sp)
                 }
             },
             containerColor = Color.White,

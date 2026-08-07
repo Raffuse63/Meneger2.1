@@ -51,10 +51,17 @@ data class BackupData(
         fun parseJson(jsonStr: String): BackupData {
             val root = JSONObject(jsonStr)
 
-            val currencySymbol = root.optString("currencySymbol", "৳")
-            val isDarkMode = root.optBoolean("isDarkMode", false)
-            val selectedCategoryFilter = root.optLong("selectedCategoryFilter", -1L)
+            var currencySymbol = root.optString("currencySymbol", "৳")
+            var isDarkMode = root.optBoolean("isDarkMode", false)
+            var selectedCategoryFilter = root.optLong("selectedCategoryFilter", -1L)
             val timestamp = root.optLong("timestamp", System.currentTimeMillis())
+
+            if (root.has("user_preferences")) {
+                val prefObj = root.getJSONObject("user_preferences")
+                currencySymbol = prefObj.optString("currencySymbol", currencySymbol)
+                isDarkMode = prefObj.optBoolean("isDarkMode", isDarkMode)
+                selectedCategoryFilter = prefObj.optLong("selectedCategoryFilter", selectedCategoryFilter)
+            }
 
             val categories = mutableListOf<CategoryEntity>()
             if (root.has("categories")) {
