@@ -37,9 +37,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import android.app.Activity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -1186,6 +1189,16 @@ class MainActivity : ComponentActivity() {
         initFirebase(this)
 
         setContent {
+            val view = LocalView.current
+            if (!view.isInEditMode) {
+                SideEffect {
+                    val window = (view.context as Activity).window
+                    window.statusBarColor = android.graphics.Color.parseColor("#2563EB")
+                    window.navigationBarColor = android.graphics.Color.parseColor("#2563EB")
+                    WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+                }
+            }
+
             val context = LocalContext.current
             val db = remember { FinanceDatabase.getDatabase(context, "Default") }
             val marketDb = remember { AppDatabase.getDatabase(context) }
@@ -1402,6 +1415,7 @@ fun FinanceApp(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             BottomNavigationBar(
                 activeTab = viewModel.currentTab,
@@ -2165,16 +2179,17 @@ fun AppHeader(
         )
     }
 
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF2563EB)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        color = Color(0xFF2563EB),
+        shadowElevation = 8.dp,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
@@ -2542,9 +2557,10 @@ fun AppHeader(
 
 data class Repayment(val amount: Double, val timestamp: Long)
 
-fun parseRepayments(repaymentsCsv: String): List<Repayment> {
-    if (repaymentsCsv.trim().isEmpty()) return emptyList()
-    return repaymentsCsv.split(";").mapNotNull {
+fun parseRepayments(repaymentsCsv: String?): List<Repayment> {
+    val safeCsv = (repaymentsCsv ?: "").trim()
+    if (safeCsv.isEmpty()) return emptyList()
+    return safeCsv.split(";").mapNotNull {
         val parts = it.split("|")
         if (parts.size == 2) {
             val amt = parts[0].toDoubleOrNull()
@@ -2560,26 +2576,35 @@ fun formatRepayments(repayments: List<Repayment>): String {
     return repayments.joinToString(";") { "${it.amount}|${it.timestamp}" }
 }
 
-fun expandTransactions(txList: List<TransactionEntity>): List<TransactionEntity> {
+fun expandTransactions(txList: List<TransactionEntity>?): List<TransactionEntity> {
+    if (txList == null) return emptyList()
     val result = ArrayList<TransactionEntity>()
     for (tx in txList) {
-        result.add(tx)
-        val isPersonal = tx.isPersonal
-        if (isPersonal && tx.repaymentsCsv.trim().isNotEmpty()) {
-            val repayments = parseRepayments(tx.repaymentsCsv)
+        val safeTx = tx.copy(
+            category = tx.category ?: "General",
+            personName = tx.personName ?: "General",
+            note = tx.note ?: "",
+            type = tx.type ?: "EXPENSE",
+            repaymentsCsv = tx.repaymentsCsv ?: ""
+        )
+        result.add(safeTx)
+        val isPersonal = safeTx.isPersonal
+        val csv = safeTx.repaymentsCsv.trim()
+        if (isPersonal && csv.isNotEmpty()) {
+            val repayments = parseRepayments(csv)
             for (rep in repayments) {
-                val syntheticType = if (tx.type == "EXPENSE") "INCOME" else "EXPENSE"
-                val mainDetails = if (tx.note.isNotBlank()) tx.note else tx.category
+                val syntheticType = if (safeTx.type == "EXPENSE") "INCOME" else "EXPENSE"
+                val mainDetails = if (safeTx.note.isNotBlank()) safeTx.note else safeTx.category
                 val syntheticNote = "Repayment: $mainDetails"
                 result.add(
                     TransactionEntity(
-                        id = -tx.id - rep.timestamp.toInt().coerceAtLeast(1),
+                        id = -safeTx.id - rep.timestamp.toInt().coerceAtLeast(1),
                         amount = rep.amount,
                         type = syntheticType,
                         category = "Account",
                         dateTime = rep.timestamp,
                         note = syntheticNote,
-                        personName = tx.personName,
+                        personName = safeTx.personName,
                         paidAmount = 0.0,
                         repaymentsCsv = "",
                         isPersonal = true
@@ -3874,30 +3899,34 @@ fun TrackerSessionView(
 
     val personsState by viewModel.persons.collectAsStateWithLifecycle(initialValue = emptyList())
 
+    val generalTransactions = remember(transactions) { expandTransactions(transactions) }
+
     // Suggestions logic for Category and Group/Person inputs
-    val allCategories = remember(transactions) {
-        transactions.map { it.category.trim() }.filter { it.isNotEmpty() }.distinct()
+    val allCategories = remember(generalTransactions) {
+        generalTransactions.map { (it.category ?: "").trim() }.filter { it.isNotEmpty() }.distinct()
     }
 
-    val allGroups = remember(transactions, personsState) {
-        val fromTxs = transactions.map { it.personName.trim() }
-        val fromPersons = personsState.map { it.name.trim() }
+    val allGroups = remember(generalTransactions, personsState) {
+        val fromTxs = generalTransactions.map { (it.personName ?: "").trim() }
+        val fromPersons = (personsState ?: emptyList()).map { (it.name ?: "").trim() }
         (fromTxs + fromPersons + listOf("General", "সাধারণ")).filter { it.isNotEmpty() && !it.equals("General", ignoreCase = true) && !it.equals("সাধারণ", ignoreCase = true) }.distinct()
     }
 
     val filteredCategorySuggestions = remember(allCategories, viewModel.categoryInput) {
-        if (viewModel.categoryInput.isEmpty()) {
+        val catInput = (viewModel.categoryInput ?: "").trim()
+        if (catInput.isEmpty()) {
             allCategories.take(5)
         } else {
-            allCategories.filter { it.contains(viewModel.categoryInput, ignoreCase = true) && !it.equals(viewModel.categoryInput, ignoreCase = true) }.take(5)
+            allCategories.filter { it.contains(catInput, ignoreCase = true) && !it.equals(catInput, ignoreCase = true) }.take(5)
         }
     }
 
     val filteredGroupSuggestions = remember(allGroups, viewModel.selectedPersonName) {
-        if (viewModel.selectedPersonName.isEmpty()) {
+        val groupInput = (viewModel.selectedPersonName ?: "").trim()
+        if (groupInput.isEmpty()) {
             allGroups.take(5)
         } else {
-            allGroups.filter { it.contains(viewModel.selectedPersonName, ignoreCase = true) && !it.equals(viewModel.selectedPersonName, ignoreCase = true) }.take(5)
+            allGroups.filter { it.contains(groupInput, ignoreCase = true) && !it.equals(groupInput, ignoreCase = true) }.take(5)
         }
     }
 
@@ -3918,81 +3947,81 @@ fun TrackerSessionView(
         }
     }
 
-    val generalTransactions = expandTransactions(transactions)
-
     // 1. Calculate Carry-over Balance from previous months if month is filtered
     val isMonthFiltered = viewModel.filterYear != "ALL" && viewModel.filterMonth != "ALL"
-    val carryOverFromPrevMonths = if (isMonthFiltered) {
-        val selYear = viewModel.filterYear.toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
-        val selMonth = viewModel.filterMonth.toIntOrNull() ?: Calendar.getInstance().get(Calendar.MONTH)
-        
-        val selCal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, selYear)
-            set(Calendar.MONTH, selMonth)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+    val carryOverFromPrevMonths = remember(generalTransactions, viewModel.filterYear, viewModel.filterMonth, profile) {
+        if (isMonthFiltered) {
+            val selYear = viewModel.filterYear.toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
+            val selMonth = viewModel.filterMonth.toIntOrNull() ?: Calendar.getInstance().get(Calendar.MONTH)
+            
+            val selCal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, selYear)
+                set(Calendar.MONTH, selMonth)
+                set(Calendar.DAY_OF_MONTH, 1)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val startOfSelectedMonth = selCal.timeInMillis
+            
+            val prevTxs = generalTransactions.filter { it.dateTime < startOfSelectedMonth }
+            val prevInc = prevTxs.filter { (it.type ?: "") == "INCOME" }.sumOf { it.amount }
+            val prevExp = prevTxs.filter { (it.type ?: "") == "EXPENSE" }.sumOf { it.amount }
+            
+            val sal = if (profile.isSalaryIncluded) profile.monthlySalary else 0.0
+            val res = profile.openingBalance + sal + prevInc - prevExp
+            if (res.isNaN() || res.isInfinite()) 0.0 else res
+        } else {
+            0.0
         }
-        val startOfSelectedMonth = selCal.timeInMillis
-        
-        val prevTxs = generalTransactions.filter { it.dateTime < startOfSelectedMonth }
-        val prevInc = prevTxs.filter { it.type == "INCOME" }.sumOf { it.amount }
-        val prevExp = prevTxs.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-        
-        val sal = if (profile.isSalaryIncluded) profile.monthlySalary else 0.0
-        profile.openingBalance + sal + prevInc - prevExp
-    } else {
-        0.0
     }
 
     // 2. Process all transactions chronologically to calculate running balance and daily summary
-    val allTransactionsSorted = generalTransactions.sortedBy { it.dateTime }
-    val dailyStatsMap = LinkedHashMap<String, DailySummaryModel>()
-    
-    // Running balance starts with opening balance (and monthly salary if included)
-    var runningBalance = profile.openingBalance + (if (profile.isSalaryIncluded) profile.monthlySalary else 0.0)
-    
-    val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    val labelFormat = SimpleDateFormat("d MMMM yy", Locale.US)
-    
-    allTransactionsSorted.forEach { tx ->
-        val key = keyFormat.format(Date(tx.dateTime))
-        
-        if (tx.type == "INCOME") {
-            runningBalance += tx.amount
-        } else {
-            runningBalance -= tx.amount
+    val keyFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val labelFormat = remember { SimpleDateFormat("d MMMM yy", Locale.US) }
+
+    val activeDailySummaries = remember(generalTransactions, viewModel.filterYear, viewModel.filterMonth, viewModel.filterDay, profile) {
+        val allTransactionsSorted = generalTransactions.sortedBy { it.dateTime }
+        val dailyStatsMap = LinkedHashMap<String, DailySummaryModel>()
+        var runningBalance = profile.openingBalance + (if (profile.isSalaryIncluded) profile.monthlySalary else 0.0)
+
+        allTransactionsSorted.forEach { tx ->
+            val key = keyFormat.format(Date(tx.dateTime))
+            
+            if ((tx.type ?: "") == "INCOME") {
+                runningBalance += tx.amount
+            } else {
+                runningBalance -= tx.amount
+            }
+            
+            val stats = dailyStatsMap.getOrPut(key) {
+                DailySummaryModel(
+                    dateString = convertToBengaliNumber(labelFormat.format(Date(tx.dateTime))),
+                    timestamp = tx.dateTime,
+                    income = 0.0,
+                    expense = 0.0,
+                    balanceAtEnd = 0.0
+                )
+            }
+            
+            if ((tx.type ?: "") == "INCOME") {
+                stats.income += tx.amount
+            } else {
+                stats.expense += tx.amount
+            }
+            stats.balanceAtEnd = runningBalance
         }
-        
-        val stats = dailyStatsMap.getOrPut(key) {
-            DailySummaryModel(
-                dateString = convertToBengaliNumber(labelFormat.format(Date(tx.dateTime))),
-                timestamp = tx.dateTime,
-                income = 0.0,
-                expense = 0.0,
-                balanceAtEnd = 0.0
-            )
-        }
-        
-        if (tx.type == "INCOME") {
-            stats.income += tx.amount
-        } else {
-            stats.expense += tx.amount
-        }
-        stats.balanceAtEnd = runningBalance
+
+        dailyStatsMap.values.toList().filter { summary ->
+            val cal = Calendar.getInstance().apply { timeInMillis = summary.timestamp }
+            val matchYear = viewModel.filterYear == "ALL" || cal.get(Calendar.YEAR).toString() == viewModel.filterYear
+            val matchMonth = viewModel.filterMonth == "ALL" || cal.get(Calendar.MONTH).toString() == viewModel.filterMonth
+            val matchDay = viewModel.filterDay == "ALL" || cal.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
+            
+            matchYear && matchMonth && matchDay
+        }.sortedByDescending { it.timestamp }
     }
-    
-    // Filter the daily summary days based on dropdown filters (Year, Month, Day) and sort descending (newest first)
-    val activeDailySummaries = dailyStatsMap.values.toList().filter { summary ->
-        val cal = Calendar.getInstance().apply { timeInMillis = summary.timestamp }
-        val matchYear = viewModel.filterYear == "ALL" || cal.get(Calendar.YEAR).toString() == viewModel.filterYear
-        val matchMonth = viewModel.filterMonth == "ALL" || cal.get(Calendar.MONTH).toString() == viewModel.filterMonth
-        val matchDay = viewModel.filterDay == "ALL" || cal.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
-        
-        matchYear && matchMonth && matchDay
-    }.sortedByDescending { it.timestamp }
 
     // Category Lists
     val defaultIncomeCategories = listOf("Salary 💼", "Business 📈", "Freelancing 💻", "Investment 🏦", "Gift 🎁", "Others 🪙")
@@ -4000,31 +4029,40 @@ fun TrackerSessionView(
 
     val activeCategories = if (viewModel.activeFormType == "INCOME") defaultIncomeCategories else defaultExpenseCategories
 
-    // Apply Filters first so we can calculate and display totals at the absolute top
-    val filteredTxList = generalTransactions.filter { tx ->
-        val calTx = Calendar.getInstance().apply { timeInMillis = tx.dateTime }
-        val matchYear = viewModel.filterYear == "ALL" || calTx.get(Calendar.YEAR).toString() == viewModel.filterYear
-        val matchMonth = viewModel.filterMonth == "ALL" || calTx.get(Calendar.MONTH).toString() == viewModel.filterMonth
-        val matchDay = viewModel.filterDay == "ALL" || calTx.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
-        val matchCategory = viewModel.filterCategoryQuery.trim().isEmpty() || tx.category.contains(viewModel.filterCategoryQuery, ignoreCase = true)
-        val matchType = viewModel.filterType == "ALL" || tx.type == viewModel.filterType
+    // Apply Filters
+    val filteredTxList = remember(generalTransactions, viewModel.filterYear, viewModel.filterMonth, viewModel.filterDay, viewModel.filterCategoryQuery, viewModel.filterType) {
+        generalTransactions.filter { tx ->
+            val calTx = Calendar.getInstance().apply { timeInMillis = tx.dateTime }
+            val matchYear = viewModel.filterYear == "ALL" || calTx.get(Calendar.YEAR).toString() == viewModel.filterYear
+            val matchMonth = viewModel.filterMonth == "ALL" || calTx.get(Calendar.MONTH).toString() == viewModel.filterMonth
+            val matchDay = viewModel.filterDay == "ALL" || calTx.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
+            val txCat = (tx.category ?: "")
+            val catQuery = (viewModel.filterCategoryQuery ?: "").trim()
+            val matchCategory = catQuery.isEmpty() || txCat.contains(catQuery, ignoreCase = true)
+            val matchType = viewModel.filterType == "ALL" || (tx.type ?: "") == viewModel.filterType
 
-        matchYear && matchMonth && matchDay && matchCategory && matchType
-    }.sortedByDescending { it.dateTime }
-
-    // Summary calculations filter ONLY by date, completely ignoring search filter
-    val dateFilteredTxList = generalTransactions.filter { tx ->
-        val calTx = Calendar.getInstance().apply { timeInMillis = tx.dateTime }
-        val matchYear = viewModel.filterYear == "ALL" || calTx.get(Calendar.YEAR).toString() == viewModel.filterYear
-        val matchMonth = viewModel.filterMonth == "ALL" || calTx.get(Calendar.MONTH).toString() == viewModel.filterMonth
-        val matchDay = viewModel.filterDay == "ALL" || calTx.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
-
-        matchYear && matchMonth && matchDay
+            matchYear && matchMonth && matchDay && matchCategory && matchType
+        }.sortedByDescending { it.dateTime }
     }
 
-    val filteredIncomeSum = dateFilteredTxList.filter { it.type == "INCOME" }.sumOf { it.amount }
-    val filteredExpenseSum = dateFilteredTxList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-    val filteredBalance = filteredIncomeSum - filteredExpenseSum + carryOverFromPrevMonths
+    // Summary calculations filter ONLY by date, completely ignoring search filter
+    val dateFilteredTxList = remember(generalTransactions, viewModel.filterYear, viewModel.filterMonth, viewModel.filterDay) {
+        generalTransactions.filter { tx ->
+            val calTx = Calendar.getInstance().apply { timeInMillis = tx.dateTime }
+            val matchYear = viewModel.filterYear == "ALL" || calTx.get(Calendar.YEAR).toString() == viewModel.filterYear
+            val matchMonth = viewModel.filterMonth == "ALL" || calTx.get(Calendar.MONTH).toString() == viewModel.filterMonth
+            val matchDay = viewModel.filterDay == "ALL" || calTx.get(Calendar.DAY_OF_MONTH).toString() == viewModel.filterDay
+
+            matchYear && matchMonth && matchDay
+        }
+    }
+
+    val filteredIncomeSum = remember(dateFilteredTxList) { dateFilteredTxList.filter { (it.type ?: "") == "INCOME" }.sumOf { it.amount } }
+    val filteredExpenseSum = remember(dateFilteredTxList) { dateFilteredTxList.filter { (it.type ?: "") == "EXPENSE" }.sumOf { it.amount } }
+    val filteredBalance = remember(filteredIncomeSum, filteredExpenseSum, carryOverFromPrevMonths) {
+        val b = filteredIncomeSum - filteredExpenseSum + carryOverFromPrevMonths
+        if (b.isNaN() || b.isInfinite()) 0.0 else b
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
@@ -4040,15 +4078,15 @@ fun TrackerSessionView(
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = Color(0xFF0060A8)
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
             Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // Top section
                 Row(
@@ -4059,34 +4097,32 @@ fun TrackerSessionView(
                     Column {
                         Text(
                             text = if (isMonthFiltered) "Monthly Balance" else "Current Balance",
-                            style = MaterialTheme.typography.bodyMedium,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White.copy(alpha = 0.85f)
                         )
                         Text(
                             text = "৳ " + convertToBengaliNumber(String.format(Locale.US, "%,.0f", filteredBalance)),
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = 26.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
                     }
 
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(if (viewModel.filterType == "INCOME") Color(0xFF16A34A) else Color.White.copy(alpha = 0.22f))
                             .then(
-                                if (viewModel.filterType == "INCOME") Modifier.border(1.5.dp, Color.White, RoundedCornerShape(10.dp)) else Modifier
+                                if (viewModel.filterType == "INCOME") Modifier.border(1.5.dp, Color.White, RoundedCornerShape(8.dp)) else Modifier
                             )
                             .clickable {
                                 viewModel.filterType = if (viewModel.filterType == "INCOME") "ALL" else "INCOME"
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("💸", fontSize = 18.sp)
+                        Text("💸", fontSize = 15.sp)
                     }
                 }
 
@@ -4098,12 +4134,12 @@ fun TrackerSessionView(
                     Column {
                         Text(
                             text = "Total Income",
-                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 10.sp,
                             color = Color.White.copy(alpha = 0.8f)
                         )
                         Text(
                             text = "৳ " + convertToBengaliNumber(String.format(Locale.US, "%,.0f", filteredIncomeSum)),
-                            style = MaterialTheme.typography.titleMedium,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF86EFAC)
                         )
@@ -4112,12 +4148,12 @@ fun TrackerSessionView(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "Total Expense",
-                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 10.sp,
                             color = Color.White.copy(alpha = 0.8f)
                         )
                         Text(
                             text = "৳ " + convertToBengaliNumber(String.format(Locale.US, "%,.0f", filteredExpenseSum)),
-                            style = MaterialTheme.typography.titleMedium,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFFCA5A5)
                         )
@@ -4137,14 +4173,13 @@ fun TrackerSessionView(
                         ) {
                             Text(
                                 text = if (isMonthFiltered) "Prev. Month:" else "Expense Ratio",
-                                style = MaterialTheme.typography.labelMedium,
+                                fontSize = 10.sp,
                                 color = Color.White.copy(alpha = 0.85f)
                             )
                             if (isMonthFiltered) {
                                 Text(
                                     text = "৳ " + convertToBengaliNumber(String.format(Locale.US, "%,.0f", carryOverFromPrevMonths)),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontSize = 15.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF86EFAC)
                                 )
@@ -4152,18 +4187,18 @@ fun TrackerSessionView(
                         }
                         Text(
                             text = "${(expenseRatio * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     LinearProgressIndicator(
                         progress = { expenseRatio },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
                         color = Color(0xFFFCA5A5),
                         trackColor = Color.White.copy(alpha = 0.25f)
                     )
@@ -4284,7 +4319,7 @@ fun TrackerSessionView(
                             OutlinedTextField(
                                 value = viewModel.categoryInput,
                                 onValueChange = { viewModel.categoryInput = it },
-                                placeholder = { Text("Category (e.g. food)", fontSize = 14.sp, maxLines = 1, softWrap = false) },
+                                placeholder = { Text("Title (যেমন: খাবার, বাজার)", fontSize = 14.sp, maxLines = 1, softWrap = false) },
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = Color(0xFF0F172A),
@@ -4361,11 +4396,11 @@ fun TrackerSessionView(
                             )
                         }
 
-                        // Group/Person input field
+                        // Category (formerly Group/Person) input field
                         OutlinedTextField(
                             value = viewModel.selectedPersonName,
                             onValueChange = { viewModel.selectedPersonName = it },
-                            placeholder = { Text("গ্রুপ/ব্যক্তি (যেমন: সাধারণ, বন্ধু...)", fontSize = 14.sp, maxLines = 1, softWrap = false) },
+                            placeholder = { Text("Category (যেমন: সাধারণ, পরিবার, অফিস)", fontSize = 14.sp, maxLines = 1, softWrap = false) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color(0xFF0F172A),
@@ -4764,8 +4799,8 @@ fun TrackerSessionView(
                                 color = Color(0xFF475569)
                             )
                             listOf(
-                                "CATEGORY" to "📂 ক্যাটাগরি তালিকা",
-                                "GROUP" to "👥 গ্রুপ তালিকা"
+                                "CATEGORY" to "📂 টাইটেল তালিকা",
+                                "GROUP" to "🏷️ ক্যাটাগরি তালিকা"
                             ).forEach { (mode, label) ->
                                 val isSelected = searchViewMode == mode
                                 Box(
@@ -4788,11 +4823,12 @@ fun TrackerSessionView(
                         // Calculate Expense Category Totals from dateFilteredTxList
                         val expenseCategoryTotals = remember(dateFilteredTxList, viewModel.filterCategoryQuery) {
                             dateFilteredTxList
-                                .filter { it.type == "EXPENSE" }
-                                .groupBy { it.category.trim() }
+                                .filter { (it.type ?: "") == "EXPENSE" }
+                                .groupBy { (it.category ?: "").trim() }
                                 .mapValues { entry -> entry.value.sumOf { it.amount } }
                                 .filter { (cat, _) ->
-                                    viewModel.filterCategoryQuery.trim().isEmpty() || cat.contains(viewModel.filterCategoryQuery, ignoreCase = true)
+                                    val q = (viewModel.filterCategoryQuery ?: "").trim()
+                                    q.isEmpty() || cat.contains(q, ignoreCase = true)
                                 }
                                 .toList()
                                 .sortedByDescending { it.second }
@@ -4801,12 +4837,13 @@ fun TrackerSessionView(
                         // Calculate Expense Group (Person/Group Name) Totals from dateFilteredTxList
                         val expenseGroupTotals = remember(dateFilteredTxList, viewModel.filterCategoryQuery) {
                             dateFilteredTxList
-                                .filter { it.type == "EXPENSE" }
-                                .groupBy { it.personName.trim() }
+                                .filter { (it.type ?: "") == "EXPENSE" }
+                                .groupBy { (it.personName ?: "").trim() }
                                 .mapValues { entry -> entry.value.sumOf { it.amount } }
                                 .filter { (person, _) ->
-                                    val displayPerson = if (person.isEmpty() || person.equals("General", ignoreCase = true) || person.equals("সাধারণ", ignoreCase = true)) "সাধারণ (General)" else person
-                                    viewModel.filterCategoryQuery.trim().isEmpty() || displayPerson.contains(viewModel.filterCategoryQuery, ignoreCase = true)
+                                    val displayPerson = if (person.isEmpty() || person.equals("General", ignoreCase = true) || person.equals("সাধারণ", ignoreCase = true)) "সাধারণ" else person
+                                    val q = (viewModel.filterCategoryQuery ?: "").trim()
+                                    q.isEmpty() || displayPerson.contains(q, ignoreCase = true)
                                 }
                                 .toList()
                                 .sortedByDescending { it.second }
@@ -4825,7 +4862,7 @@ fun TrackerSessionView(
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = "📂 ক্যাটাগরি খরচ:",
+                                        text = "📂 টাইটেল খরচ:",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF475569)
@@ -4833,7 +4870,7 @@ fun TrackerSessionView(
 
                                     if (expenseCategoryTotals.isEmpty()) {
                                         Text(
-                                            text = "কোনো ক্যাটাগরি পাওয়া যায়নি",
+                                            text = "কোনো টাইটেল পাওয়া যায়নি",
                                             fontSize = 9.sp,
                                             color = Color(0xFF64748B),
                                             modifier = Modifier.padding(vertical = 4.dp)
@@ -4893,7 +4930,7 @@ fun TrackerSessionView(
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = "👥 গ্রুপ খরচ:",
+                                        text = "🏷️ ক্যাটাগরি খরচ:",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF475569)
@@ -4901,7 +4938,7 @@ fun TrackerSessionView(
 
                                     if (expenseGroupTotals.isEmpty()) {
                                         Text(
-                                            text = "কোনো গ্রুপ পাওয়া যায়নি",
+                                            text = "কোনো ক্যাটাগরি পাওয়া যায়নি",
                                             fontSize = 9.sp,
                                             color = Color(0xFF64748B),
                                             modifier = Modifier.padding(vertical = 4.dp)
@@ -5199,8 +5236,14 @@ fun TransactionItemRow(
     onDelete: () -> Unit,
     onDoubleClick: () -> Unit
 ) {
-    val dateString = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(transaction.dateTime))
-    val isIncome = transaction.type == "INCOME"
+    val dateString = try {
+        SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(transaction.dateTime))
+    } catch (e: Exception) {
+        ""
+    }
+    val isIncome = (transaction.type ?: "EXPENSE") == "INCOME"
+    val pName = (transaction.personName ?: "").trim()
+    val catName = (transaction.category ?: "").trim()
 
     Card(
         modifier = Modifier
@@ -5252,11 +5295,11 @@ fun TransactionItemRow(
                 // Left block: category name & details
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Column {
-                        val hasGroup = transaction.personName.isNotEmpty() &&
-                                !transaction.personName.trim().equals("সাধারণ", ignoreCase = true) &&
-                                !transaction.personName.trim().equals("general", ignoreCase = true)
+                        val hasGroup = pName.isNotEmpty() &&
+                                !pName.equals("সাধারণ", ignoreCase = true) &&
+                                !pName.equals("general", ignoreCase = true)
 
-                        val dispCategory = if (transaction.isPersonal) transaction.personName else transaction.category
+                        val dispCategory = if (transaction.isPersonal) pName else (if (catName.isEmpty()) "General" else catName)
 
                         Text(
                             text = dispCategory,
@@ -5282,7 +5325,7 @@ fun TransactionItemRow(
                                     fontSize = 9.sp
                                 )
                                 Text(
-                                    text = "👥 ${transaction.personName}",
+                                    text = "🏷️ $pName",
                                     color = Color(0xFF1976D2),
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
@@ -5297,8 +5340,9 @@ fun TransactionItemRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    val formattedAmt = if (transaction.amount.isNaN() || transaction.amount.isInfinite()) "0" else String.format(Locale.US, "%,.0f", transaction.amount)
                     Text(
-                        text = "৳" + convertToBengaliNumber(String.format(Locale.US, "%,.0f", transaction.amount)),
+                        text = "৳" + convertToBengaliNumber(formattedAmt),
                         color = if (isIncome) Color(0xFF2E7D32) else Color(0xFFC62828),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Black
@@ -6282,10 +6326,10 @@ fun DoubleTapDetailsDialog(transaction: TransactionEntity, onDismiss: () -> Unit
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        // Category (on the bottom left)
+                        // Title (on the bottom left)
                         Column {
                             Text(
-                                text = "Category",
+                                text = "Title",
                                 fontSize = 8.sp,
                                 color = Color(0xFF94A3B8)
                             )
@@ -6306,7 +6350,7 @@ fun DoubleTapDetailsDialog(transaction: TransactionEntity, onDismiss: () -> Unit
                                 !transaction.personName.trim().equals("সাধারণ", ignoreCase = true) &&
                                 !transaction.personName.trim().equals("general", ignoreCase = true)) {
                                 Text(
-                                    text = "👥 Group: ${transaction.personName}",
+                                    text = "🏷️ Category: ${transaction.personName}",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = Color(0xFF1976D2)
@@ -6374,7 +6418,7 @@ fun BottomNavigationBar(activeTab: String, onTabSelected: (String) -> Unit) {
         NavigationBarItem(
             selected = activeTab == "NOTICE",
             onClick = { onTabSelected("NOTICE") },
-            icon = { Text("📓", fontSize = 18.sp) },
+            icon = { Icon(imageVector = Icons.Default.EditNote, contentDescription = "Notebook", modifier = Modifier.size(24.dp)) },
             label = { Text("Notebook", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) },
             modifier = Modifier
                 .padding(horizontal = 2.dp, vertical = 2.dp)
@@ -6394,7 +6438,7 @@ fun BottomNavigationBar(activeTab: String, onTabSelected: (String) -> Unit) {
         NavigationBarItem(
             selected = activeTab == "ACCOUNT",
             onClick = { onTabSelected("ACCOUNT") },
-            icon = { Text("👥", fontSize = 18.sp) },
+            icon = { Icon(imageVector = Icons.Default.People, contentDescription = "Account", modifier = Modifier.size(22.dp)) },
             label = { Text("Account", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) },
             modifier = Modifier
                 .padding(horizontal = 2.dp, vertical = 2.dp)
@@ -6414,7 +6458,7 @@ fun BottomNavigationBar(activeTab: String, onTabSelected: (String) -> Unit) {
         NavigationBarItem(
             selected = activeTab == "TRACKER",
             onClick = { onTabSelected("TRACKER") },
-            icon = { Text("💸", fontSize = 18.sp) },
+            icon = { Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = "Tracker", modifier = Modifier.size(22.dp)) },
             label = { Text("Tracker", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) },
             modifier = Modifier
                 .padding(horizontal = 2.dp, vertical = 2.dp)
@@ -6434,7 +6478,7 @@ fun BottomNavigationBar(activeTab: String, onTabSelected: (String) -> Unit) {
         NavigationBarItem(
             selected = activeTab == "BAZAR",
             onClick = { onTabSelected("BAZAR") },
-            icon = { Text("🛒", fontSize = 18.sp) },
+            icon = { Icon(imageVector = Icons.Default.ShoppingCart, contentDescription = "Bazar", modifier = Modifier.size(22.dp)) },
             label = { Text("Bazar", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) },
             modifier = Modifier
                 .padding(horizontal = 2.dp, vertical = 2.dp)
@@ -6454,7 +6498,7 @@ fun BottomNavigationBar(activeTab: String, onTabSelected: (String) -> Unit) {
         NavigationBarItem(
             selected = activeTab == "BUDGET",
             onClick = { onTabSelected("BUDGET") },
-            icon = { Text("📊", fontSize = 18.sp) },
+            icon = { Icon(imageVector = Icons.Default.PieChart, contentDescription = "Budget", modifier = Modifier.size(22.dp)) },
             label = { Text("Budget", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) },
             modifier = Modifier
                 .padding(horizontal = 2.dp, vertical = 2.dp)

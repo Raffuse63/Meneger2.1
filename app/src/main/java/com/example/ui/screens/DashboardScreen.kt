@@ -7,15 +7,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.*
@@ -25,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,10 +58,15 @@ fun DashboardScreen(
     var deletingExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
     var movingExpense by remember { mutableStateOf<ExpenseEntity?>(null) }
     var isReorderMode by remember { mutableStateOf(false) }
+    var filterExpanded by remember { mutableStateOf(false) }
 
     // Metrics calculation according to selected category filter
     val selectedCatId = userPrefs.selectedCategoryFilter
     val currency = userPrefs.currencySymbol
+
+    val selectedCategoryName = remember(categories, selectedCatId) {
+        if (selectedCatId == -1L) "সব" else categories.find { it.id == selectedCatId }?.name ?: "সব"
+    }
 
     val targetCategories = remember(categories, selectedCatId) {
         if (selectedCatId == -1L) categories else categories.filter { it.id == selectedCatId }
@@ -106,7 +115,7 @@ fun DashboardScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 88.dp, top = 8.dp)
         ) {
             // Summary Balance Card
@@ -114,6 +123,7 @@ fun DashboardScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(bottom = 8.dp)
                         .testTag("summary_balance_card"),
                     shape = RoundedCornerShape(28.dp),
                     colors = CardDefaults.cardColors(
@@ -125,7 +135,7 @@ fun DashboardScreen(
                         modifier = Modifier.padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Top section
+                        // Top section: Remaining Balance (left), Category Dropdown Filter (middle top), Category Icon (right)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -133,19 +143,105 @@ fun DashboardScreen(
                         ) {
                             Column {
                                 Text(
-                                    text = "মোট বাজেট",
+                                    text = "অবশিষ্ট ব্যালেন্স",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
                                     color = Color.White.copy(alpha = 0.85f)
                                 )
                                 Text(
-                                    text = "৳ %,d".format(totalBudget.toLong()),
+                                    text = "৳ %,d".format(remainingBalance.toLong()),
                                     style = MaterialTheme.typography.titleLarge.copy(
                                         fontSize = 26.sp,
                                         fontWeight = FontWeight.Bold
                                     ),
-                                    color = Color.White
+                                    color = if (remainingBalance < 0) Color(0xFFFFB4AB) else Color.White
                                 )
+                            }
+
+                            // Category Dropdown Filter placed at Middle Top
+                            Box {
+                                Surface(
+                                    onClick = { filterExpanded = true },
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = Color.White.copy(alpha = 0.22f),
+                                    contentColor = Color.White,
+                                    modifier = Modifier
+                                        .width(85.dp)
+                                        .testTag("category_filter_dropdown_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.FilterList,
+                                            contentDescription = "ফিল্টার",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            text = if (selectedCatId == -1L) "সব" else selectedCategoryName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(horizontal = 2.dp)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                DropdownMenu(
+                                    expanded = filterExpanded,
+                                    onDismissRequest = { filterExpanded = false },
+                                    modifier = Modifier
+                                        .width(160.dp)
+                                        .background(MaterialTheme.colorScheme.surface)
+                                ) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "সব (${categories.size})",
+                                                fontWeight = if (selectedCatId == -1L) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (selectedCatId == -1L) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.setSelectedCategoryFilter(-1L)
+                                            filterExpanded = false
+                                        }
+                                    )
+                                    HorizontalDivider()
+                                    categories.forEach { cat ->
+                                        val isSelected = selectedCatId == cat.id
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = cat.name,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            },
+                                            onClick = {
+                                                viewModel.setSelectedCategoryFilter(cat.id)
+                                                filterExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
                             }
 
                             Box(
@@ -166,19 +262,19 @@ fun DashboardScreen(
                             }
                         }
 
-                        // Middle Row
+                        // Bottom Row: Total Budget (bottom left) & Total Expense (bottom right)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
                                 Text(
-                                    text = "মোট খরচ",
+                                    text = "মোট বাজেট",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = Color.White.copy(alpha = 0.8f)
                                 )
                                 Text(
-                                    text = "৳ %,d".format(totalSpent.toLong()),
+                                    text = "৳ %,d".format(totalBudget.toLong()),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
@@ -187,12 +283,12 @@ fun DashboardScreen(
 
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = "অবশিষ্ট ব্যালেন্স",
+                                    text = "মোট খরচ",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = Color.White.copy(alpha = 0.8f)
                                 )
                                 Text(
-                                    text = "৳ %,d".format(remainingBalance.toLong()),
+                                    text = "৳ %,d".format(totalSpent.toLong()),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
@@ -236,14 +332,16 @@ fun DashboardScreen(
 
             // Recent Transactions Header
             item {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isReorderMode) "সাজানোর মুড (উপরে/নিচে নামান)" else "সাম্প্রতিক খরচ",
+                        text = if (isReorderMode) "সাজানোর মুড (উপরে/নিচে নামান)" else if (selectedCatId == -1L) "সাম্প্রতিক খরচ" else "সাম্প্রতিক খরচ ($selectedCategoryName)",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = if (isReorderMode) Color(0xFFD97706) else Color(0xFF1E293B),
@@ -283,7 +381,7 @@ fun DashboardScreen(
                     )
                 }
             } else {
-                val expenseList = filteredExpenses.take(10)
+                val expenseList = filteredExpenses
                 itemsIndexed(
                     items = expenseList,
                     key = { _, expense -> expense.id }

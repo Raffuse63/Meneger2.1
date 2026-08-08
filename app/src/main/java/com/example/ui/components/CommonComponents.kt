@@ -4,8 +4,11 @@ import android.icu.text.SimpleDateFormat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,8 +21,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -218,6 +225,7 @@ fun AnimatedBudgetProgressBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExpenseItemCard(
     expense: ExpenseEntity,
@@ -234,6 +242,7 @@ fun ExpenseItemCard(
     onMoveDown: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
     val (bgColor, iconColor, icon) = when {
         categoryName.contains("খাবার") || categoryName.lowercase().contains("food") -> Triple(PastelFoodBg, PastelFoodIcon, Icons.Default.Restaurant)
         categoryName.contains("যাতায়াত") || categoryName.contains("ট্রান্সপোর্ট") || categoryName.lowercase().contains("transport") -> Triple(PastelTransportBg, PastelTransportIcon, Icons.Default.DirectionsCar)
@@ -274,24 +283,31 @@ fun ExpenseItemCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .testTag("expense_item_${expense.id}"),
-        shape = RoundedCornerShape(20.dp),
+            .testTag("expense_item_${expense.id}")
+            .combinedClickable(
+                onClick = { onEdit() },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onDelete()
+                }
+            ),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.White
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(bgColor),
                 contentAlignment = Alignment.Center
             ) {
@@ -299,20 +315,24 @@ fun ExpenseItemCard(
                     imageVector = icon,
                     contentDescription = categoryName,
                     tint = iconColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = expense.description,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E293B)
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = Color(0xFF0F172A),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -326,24 +346,47 @@ fun ExpenseItemCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = iconColor,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
                     Text(
                         text = "•  $formattedDate",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF64748B)
+                        color = Color(0xFF64748B),
+                        fontSize = 11.sp
                     )
                 }
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "- $formattedAmount",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = ExpenseRed
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "- $formattedAmount",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = ExpenseRed
+                    )
+                }
+
+                IconButton(
+                    onClick = { onEdit() },
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .size(32.dp)
+                        .testTag("edit_expense_${expense.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "সম্পাদনা",
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
             }
 
             if (isReorderMode) {
@@ -501,16 +544,58 @@ fun AddEditExpenseDialog(
                     }
                 }
 
-                // Date Display
-                OutlinedTextField(
-                    value = sdf.format(Date(dateMillis)),
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("তারিখ") },
-                    leadingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = "তারিখ") },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // Date Display with Calendar Picker
+                val context = LocalContext.current
+                val calendar = remember(dateMillis) {
+                    Calendar.getInstance().apply { timeInMillis = dateMillis }
+                }
+
+                val datePickerDialog = remember(context, dateMillis) {
+                    android.app.DatePickerDialog(
+                        context,
+                        { _, year, month, dayOfMonth ->
+                            val cal = Calendar.getInstance().apply {
+                                timeInMillis = dateMillis
+                                set(Calendar.YEAR, year)
+                                set(Calendar.MONTH, month)
+                                set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                            }
+                            dateMillis = cal.timeInMillis
+                        },
+                        calendar.get(Calendar.YEAR),
+                        calendar.get(Calendar.MONTH),
+                        calendar.get(Calendar.DAY_OF_MONTH)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { datePickerDialog.show() }
+                ) {
+                    OutlinedTextField(
+                        value = sdf.format(Date(dateMillis)),
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = false,
+                        label = { Text("তারিখ (ক্যালেন্ডার নির্বাচন)") },
+                        leadingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = "তারিখ") },
+                        trailingIcon = {
+                            IconButton(onClick = { datePickerDialog.show() }) {
+                                Icon(Icons.Default.DateRange, contentDescription = "তারিখ নির্বাচন", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                            disabledBorderColor = MaterialTheme.colorScheme.outline,
+                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {

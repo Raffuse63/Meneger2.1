@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,6 +20,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -28,13 +32,14 @@ import com.example.ui.components.EmptyStateView
 import com.example.ui.theme.CategoryColors
 import com.example.ui.viewmodel.ExpenseViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CategoryScreen(
     viewModel: ExpenseViewModel,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
     val categories by viewModel.categories.collectAsState()
     val allExpenses by viewModel.allExpenses.collectAsState()
     val userPrefs by viewModel.userPreferences.collectAsState()
@@ -127,7 +132,14 @@ fun CategoryScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("category_card_${category.id}"),
+                                .testTag("category_card_${category.id}")
+                                .combinedClickable(
+                                    onClick = { editingCategory = category },
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        deletingCategory = category
+                                    }
+                                ),
                             shape = RoundedCornerShape(18.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
